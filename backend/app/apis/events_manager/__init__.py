@@ -3,9 +3,9 @@ from datetime import date, datetime, timedelta, timezone
 from fastapi import APIRouter, HTTPException, Depends, Response
 from pydantic import BaseModel
 from typing import Optional
-import databutton as db
 
 from app.apis.admin_auth import require_admin
+from app.libs.storage import json_get, json_put
 
 router = APIRouter(prefix="/events")
 
@@ -128,15 +128,15 @@ DEFAULT_EVENTS = [
 
 def load_events() -> list[dict]:
     """Load events from storage, seeding defaults if not yet set."""
-    data = db.storage.json.get(STORAGE_KEY, default=None)
+    data = json_get(STORAGE_KEY, default=None)
     if data is None:
         # First run — seed with defaults
-        db.storage.json.put(STORAGE_KEY, DEFAULT_EVENTS)
+        json_put(STORAGE_KEY, DEFAULT_EVENTS)
         return DEFAULT_EVENTS
     return data
 
 def save_events(events: list[dict]) -> None:
-    db.storage.json.put(STORAGE_KEY, events)
+    json_put(STORAGE_KEY, events)
 
 def next_id(events: list[dict]) -> int:
     if not events:
