@@ -2,7 +2,8 @@ import { useEffect, useState } from "react";
 import { apiClient } from "app";
 import { ChurchCalendar, type ChurchEvent } from "components/ChurchCalendar";
 import { useNavigate } from "react-router-dom";
-import { ArrowLeft, Plus, AlertCircle, Lock, Unlock, LogOut } from "lucide-react";
+import { ArrowLeft, Plus, AlertCircle, Lock, Unlock, LogOut, Bell, Copy, Check, CalendarPlus } from "lucide-react";
+import { subscriptionFeedUrl, subscriptionFeedWebcal } from "utils/calendarLinks";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -27,6 +28,8 @@ const COLOR_OPTIONS = [
 ];
 
 const DAY_NAMES_FULL = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
+
+const ADMIN_TOKEN_KEY = "hollywood_admin_token";
 
 type ScheduleType = "weekly" | "monthly-last" | "one-off" | "date-range";
 
@@ -55,6 +58,10 @@ export default function CalendarPage() {
   const [passwordInput, setPasswordInput] = useState("");
   const [loginLoading, setLoginLoading] = useState(false);
   const [loginError, setLoginError] = useState("");
+
+  // ── Subscribe dialog state ──
+  const [subscribeOpen, setSubscribeOpen] = useState(false);
+  const [copied, setCopied] = useState(false);
 
   // ── Event dialog state ──
   const [dialogOpen, setDialogOpen] = useState(false);
@@ -97,6 +104,26 @@ export default function CalendarPage() {
 
   useEffect(() => { loadEvents(); }, []);
 
+  // ── Restore admin session from a previously stored token ──
+  useEffect(() => {
+    const stored = localStorage.getItem(ADMIN_TOKEN_KEY);
+    if (!stored) return;
+    apiClient.admin_verify({ token: stored })
+      .then(res => res.json())
+      .then(data => {
+        if (data.valid) {
+          setAdminToken(stored);
+          setIsAdmin(true);
+        } else {
+          localStorage.removeItem(ADMIN_TOKEN_KEY);
+        }
+      })
+      .catch(() => localStorage.removeItem(ADMIN_TOKEN_KEY));
+  }, []);
+
+  // Auth header for admin-only requests.
+  const authHeaders = () => ({ headers: { "X-Admin-Token": adminToken ?? "" } });
+
   // ── Admin login ──
   const handleLogin = async () => {
     if (!passwordInput.trim()) return;
@@ -108,6 +135,7 @@ export default function CalendarPage() {
       if (data.token) {
         setAdminToken(data.token);
         setIsAdmin(true);
+        localStorage.setItem(ADMIN_TOKEN_KEY, data.token);
         setLoginOpen(false);
         setPasswordInput("");
         toast.success("Admin mode enabled");
@@ -128,6 +156,7 @@ export default function CalendarPage() {
     }
     setIsAdmin(false);
     setAdminToken(null);
+    localStorage.removeItem(ADMIN_TOKEN_KEY);
     toast.success("Admin mode disabled");
   };
 
@@ -211,30 +240,41 @@ export default function CalendarPage() {
     try {
       const payload = buildPayload();
       if (editingEvent) {
-        await apiClient.update_event({ eventId: editingEvent.id }, payload);
+        await apiClient.update_event({ eventId: editingEvent.id }, payload, authHeaders());
         toast.success("Event updated");
       } else {
-        await apiClient.create_event(payload);
+        await apiClient.create_event(payload, authHeaders());
         toast.success("Event created");
       }
       setDialogOpen(false);
       await loadEvents();
     } catch {
-      toast.error("Failed to save event");
+      toast.error("Failed to save event. Your admin session may have expired — try logging in again.");
     } finally {
       setSaving(false);
+    }
+  };
+
+  // ── Copy feed URL ──
+  const handleCopyFeed = async () => {
+    try {
+      await navigator.clipboard.writeText(subscriptionFeedUrl());
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch {
+      toast.error("Couldn't copy — please copy the link manually");
     }
   };
 
   // ── Delete event ──
   const handleDelete = async (id: number) => {
     try {
-      await apiClient.delete_event({ eventId: id });
+      await apiClient.delete_event({ eventId: id }, authHeaders());
       toast.success("Event deleted");
       setDeleteConfirmId(null);
       await loadEvents();
     } catch {
-      toast.error("Failed to delete event");
+      toast.error("Failed to delete event. Your admin session may have expired — try logging in again.");
     }
   };
 
@@ -264,6 +304,10 @@ export default function CalendarPage() {
 
           {/* Admin controls */}
           <div className="flex items-center gap-2 flex-shrink-0">
+            {/* Visitor: subscribe to the calendar feed */}
+            <Button variant="outline" size="lg" onClick={() => { setCopied(false); setSubscribeOpen(true); }}>
+              <Bell className="mr-2 h-4 w-4" /> Subscribe
+            </Button>
             {isAdmin && (
               <>
                 <Button onClick={openAdd} size="lg">
@@ -344,6 +388,48 @@ export default function CalendarPage() {
             <Button onClick={handleLogin} disabled={loginLoading || !passwordInput.trim()}>
               {loginLoading ? "Verifying..." : "Login"}
             </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* ── Subscribe Dialog ── */}
+      <Dialog open={subscribeOpen} onOpenChange={setSubscribeOpen}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Bell className="h-5 w-5" /> Subscribe to the Calendar
+            </DialogTitle>
+            <DialogDescription>
+              Subscribe once and every event — including future additions and changes — syncs
+              automatically into your calendar app, which will send you reminders.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-4 py-2">
+            <a href={subscriptionFeedWebcal()} className="block">
+              <Button className="w-full">
+                <CalendarPlus className="mr-2 h-4 w-4" /> Add to my calendar app
+              </Button>
+            </a>
+
+            <div className="space-y-1.5">
+              <Label className="text-xs text-muted-foreground">Or copy the feed link</Label>
+              <div className="flex gap-2">
+                <Input readOnly value={subscriptionFeedUrl()} className="text-xs" onFocus={e => e.currentTarget.select()} />
+                <Button variant="outline" size="icon" onClick={handleCopyFeed} title="Copy link">
+                  {copied ? <Check className="h-4 w-4 text-emerald-500" /> : <Copy className="h-4 w-4" />}
+                </Button>
+              </div>
+            </div>
+
+            <div className="text-xs text-muted-foreground space-y-1.5 border-t border-border pt-3">
+              <p><span className="font-medium text-foreground">Apple Calendar / Outlook:</span> click "Add to my calendar app" above, or paste the link via File → New Calendar Subscription.</p>
+              <p><span className="font-medium text-foreground">Google Calendar:</span> Settings → Add calendar → From URL, then paste the copied link.</p>
+            </div>
+          </div>
+
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setSubscribeOpen(false)}>Close</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

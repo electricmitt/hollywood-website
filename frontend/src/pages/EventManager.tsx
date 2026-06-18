@@ -9,9 +9,12 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
 import { Separator } from "@/components/ui/separator";
-import { Pencil, Trash2, Plus, Calendar, MapPin, Clock, AlertCircle } from "lucide-react";
+import { Pencil, Trash2, Plus, Calendar, MapPin, Clock, AlertCircle, Lock } from "lucide-react";
+import { useNavigate } from "react-router-dom";
 import { toast } from "sonner";
 import type { ChurchEvent, CreateEventRequest } from "../apiclient/data-contracts";
+
+const ADMIN_TOKEN_KEY = "hollywood_admin_token";
 
 const COLOR_OPTIONS = [
   { label: "Indigo", value: "bg-indigo-500" },
@@ -42,6 +45,9 @@ const emptyForm = (): CreateEventRequest => ({
 });
 
 export default function EventManager() {
+  const navigate = useNavigate();
+  const [adminToken, setAdminToken] = useState<string | null>(null);
+  const [authChecked, setAuthChecked] = useState(false);
   const [events, setEvents] = useState<ChurchEvent[]>([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -70,6 +76,22 @@ export default function EventManager() {
   };
 
   useEffect(() => { loadEvents(); }, []);
+
+  // Verify any stored admin token; this page is admin-only.
+  useEffect(() => {
+    const stored = localStorage.getItem(ADMIN_TOKEN_KEY);
+    if (!stored) { setAuthChecked(true); return; }
+    apiClient.admin_verify({ token: stored })
+      .then(res => res.json())
+      .then(data => {
+        if (data.valid) setAdminToken(stored);
+        else localStorage.removeItem(ADMIN_TOKEN_KEY);
+      })
+      .catch(() => localStorage.removeItem(ADMIN_TOKEN_KEY))
+      .finally(() => setAuthChecked(true));
+  }, []);
+
+  const authHeaders = () => ({ headers: { "X-Admin-Token": adminToken ?? "" } });
 
   const openAdd = () => {
     setEditingEvent(null);
@@ -148,16 +170,16 @@ export default function EventManager() {
     try {
       const payload = buildPayload();
       if (editingEvent) {
-        await apiClient.update_event({ eventId: editingEvent.id }, payload);
+        await apiClient.update_event({ eventId: editingEvent.id }, payload, authHeaders());
         toast.success("Event updated");
       } else {
-        await apiClient.create_event(payload);
+        await apiClient.create_event(payload, authHeaders());
         toast.success("Event created");
       }
       setDialogOpen(false);
       await loadEvents();
     } catch {
-      toast.error("Failed to save event");
+      toast.error("Failed to save event. Your admin session may have expired — log in again.");
     } finally {
       setSaving(false);
     }
@@ -165,12 +187,12 @@ export default function EventManager() {
 
   const handleDelete = async (id: number) => {
     try {
-      await apiClient.delete_event({ eventId: id });
+      await apiClient.delete_event({ eventId: id }, authHeaders());
       toast.success("Event deleted");
       setDeleteConfirmId(null);
       await loadEvents();
     } catch {
-      toast.error("Failed to delete event");
+      toast.error("Failed to delete event. Your admin session may have expired — log in again.");
     }
   };
 
@@ -181,6 +203,26 @@ export default function EventManager() {
     if (event.date) return event.date;
     return "—";
   };
+
+  // Admin-only gate: without a valid session, send users to the calendar login.
+  if (authChecked && !adminToken) {
+    return (
+      <div className="min-h-screen bg-background pt-24 pb-16">
+        <div className="container px-4 md:px-6 mx-auto max-w-md">
+          <div className="bg-card border border-border rounded-xl p-8 flex flex-col items-center text-center gap-4">
+            <div className="w-12 h-12 rounded-full bg-amber-500/10 flex items-center justify-center">
+              <Lock className="h-6 w-6 text-amber-500" />
+            </div>
+            <h1 className="text-2xl font-bold">Admin Access Required</h1>
+            <p className="text-muted-foreground text-sm">
+              Sign in as an administrator from the calendar to manage events.
+            </p>
+            <Button onClick={() => navigate("/calendarpage")}>Go to Calendar to Log In</Button>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen bg-background pt-24 pb-16">

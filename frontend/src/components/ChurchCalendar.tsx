@@ -1,8 +1,15 @@
 import { useState, useMemo } from "react";
-import { ChevronLeft, ChevronRight, MapPin, Clock, X, Pencil, Trash2 } from "lucide-react";
+import { ChevronLeft, ChevronRight, MapPin, Clock, X, Pencil, Trash2, CalendarPlus } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import {
+  DropdownMenu,
+  DropdownMenuTrigger,
+  DropdownMenuContent,
+  DropdownMenuItem,
+} from "@/components/ui/dropdown-menu";
 import { cn } from "@/lib/utils";
+import { googleCalendarUrl, downloadEventIcs } from "utils/calendarLinks";
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -352,6 +359,30 @@ export function ChurchCalendar({ events, onEdit, onDelete }: Props) {
                             </div>
                           </div>
                           <p className="text-xs text-muted-foreground leading-relaxed">{ev.description}</p>
+
+                          {/* Add-to-calendar (visitor-facing) */}
+                          {selectedDay && (
+                            <DropdownMenu>
+                              <DropdownMenuTrigger asChild>
+                                <Button variant="outline" size="sm" className="mt-3 h-7 text-xs">
+                                  <CalendarPlus size={13} className="mr-1.5" />
+                                  Add to Calendar
+                                </Button>
+                              </DropdownMenuTrigger>
+                              <DropdownMenuContent align="start">
+                                <DropdownMenuItem
+                                  onClick={() =>
+                                    window.open(googleCalendarUrl(ev, selectedDay), "_blank", "noopener,noreferrer")
+                                  }
+                                >
+                                  Google Calendar
+                                </DropdownMenuItem>
+                                <DropdownMenuItem onClick={() => downloadEventIcs(ev, selectedDay)}>
+                                  Apple / Outlook (.ics)
+                                </DropdownMenuItem>
+                              </DropdownMenuContent>
+                            </DropdownMenu>
+                          )}
                         </div>
                       </div>
                     </div>
