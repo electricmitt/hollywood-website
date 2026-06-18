@@ -204,8 +204,20 @@ export default function EventManager() {
     return "—";
   };
 
+  // Wait for the session check before rendering anything, so non-admins never
+  // see the management UI flash on screen.
+  if (!authChecked) {
+    return (
+      <div className="min-h-screen bg-background pt-24 pb-16">
+        <div className="container px-4 md:px-6 mx-auto max-w-5xl">
+          <div className="h-24 rounded-xl bg-card border border-border animate-pulse" />
+        </div>
+      </div>
+    );
+  }
+
   // Admin-only gate: without a valid session, send users to the calendar login.
-  if (authChecked && !adminToken) {
+  if (!adminToken) {
     return (
       <div className="min-h-screen bg-background pt-24 pb-16">
         <div className="container px-4 md:px-6 mx-auto max-w-md">
