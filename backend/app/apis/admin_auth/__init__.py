@@ -3,7 +3,8 @@ import secrets
 import time
 from fastapi import APIRouter, HTTPException, Header
 from pydantic import BaseModel
-import databutton as db
+
+from app.libs.storage import json_get, json_put
 
 router = APIRouter(prefix="/admin-auth", tags=["admin-auth"])
 
@@ -32,11 +33,11 @@ class AdminVerifyResponse(BaseModel):
 # ─── Session storage helpers ──────────────────────────────────────────────────
 
 def _load_sessions() -> dict[str, float]:
-    return db.storage.json.get(_SESSIONS_KEY, default={})
+    return json_get(_SESSIONS_KEY, default={})
 
 
 def _save_sessions(sessions: dict[str, float]) -> None:
-    db.storage.json.put(_SESSIONS_KEY, sessions)
+    json_put(_SESSIONS_KEY, sessions)
 
 
 def _prune(sessions: dict[str, float]) -> dict[str, float]:
