@@ -12,9 +12,8 @@ import { Separator } from "@/components/ui/separator";
 import { Pencil, Trash2, Plus, Calendar, MapPin, Clock, AlertCircle, Lock } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { toast } from "sonner";
+import { useAdminSession } from "utils/useAdminSession";
 import type { ChurchEvent, CreateEventRequest } from "../apiclient/data-contracts";
-
-const ADMIN_TOKEN_KEY = "hollywood_admin_token";
 
 const COLOR_OPTIONS = [
   { label: "Indigo", value: "bg-indigo-500" },
@@ -46,8 +45,7 @@ const emptyForm = (): CreateEventRequest => ({
 
 export default function EventManager() {
   const navigate = useNavigate();
-  const [adminToken, setAdminToken] = useState<string | null>(null);
-  const [authChecked, setAuthChecked] = useState(false);
+  const { adminToken, authChecked, authHeaders } = useAdminSession();
   const [events, setEvents] = useState<ChurchEvent[]>([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -76,22 +74,6 @@ export default function EventManager() {
   };
 
   useEffect(() => { loadEvents(); }, []);
-
-  // Verify any stored admin token; this page is admin-only.
-  useEffect(() => {
-    const stored = localStorage.getItem(ADMIN_TOKEN_KEY);
-    if (!stored) { setAuthChecked(true); return; }
-    apiClient.admin_verify({ token: stored })
-      .then(res => res.json())
-      .then(data => {
-        if (data.valid) setAdminToken(stored);
-        else localStorage.removeItem(ADMIN_TOKEN_KEY);
-      })
-      .catch(() => localStorage.removeItem(ADMIN_TOKEN_KEY))
-      .finally(() => setAuthChecked(true));
-  }, []);
-
-  const authHeaders = () => ({ headers: { "X-Admin-Token": adminToken ?? "" } });
 
   const openAdd = () => {
     setEditingEvent(null);

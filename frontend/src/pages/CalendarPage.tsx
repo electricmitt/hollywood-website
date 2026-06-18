@@ -4,6 +4,7 @@ import { ChurchCalendar, type ChurchEvent } from "components/ChurchCalendar";
 import { useNavigate } from "react-router-dom";
 import { ArrowLeft, Plus, AlertCircle, Lock, Unlock, LogOut, Bell, Copy, Check, CalendarPlus } from "lucide-react";
 import { subscriptionFeedUrl, subscriptionFeedWebcal } from "utils/calendarLinks";
+import { useAdminSession } from "utils/useAdminSession";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -29,8 +30,6 @@ const COLOR_OPTIONS = [
 
 const DAY_NAMES_FULL = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
 
-const ADMIN_TOKEN_KEY = "hollywood_admin_token";
-
 type ScheduleType = "weekly" | "monthly-last" | "one-off" | "date-range";
 
 const emptyForm = (): CreateEventRequest => ({
@@ -52,8 +51,7 @@ export default function CalendarPage() {
   const [loading, setLoading] = useState(true);
 
   // ── Admin session ──
-  const [isAdmin, setIsAdmin] = useState(false);
-  const [adminToken, setAdminToken] = useState<string | null>(null);
+  const { isAdmin, authHeaders, login, logout } = useAdminSession();
   const [loginOpen, setLoginOpen] = useState(false);
   const [passwordInput, setPasswordInput] = useState("");
   const [loginLoading, setLoginLoading] = useState(false);
@@ -104,38 +102,13 @@ export default function CalendarPage() {
 
   useEffect(() => { loadEvents(); }, []);
 
-  // ── Restore admin session from a previously stored token ──
-  useEffect(() => {
-    const stored = localStorage.getItem(ADMIN_TOKEN_KEY);
-    if (!stored) return;
-    apiClient.admin_verify({ token: stored })
-      .then(res => res.json())
-      .then(data => {
-        if (data.valid) {
-          setAdminToken(stored);
-          setIsAdmin(true);
-        } else {
-          localStorage.removeItem(ADMIN_TOKEN_KEY);
-        }
-      })
-      .catch(() => localStorage.removeItem(ADMIN_TOKEN_KEY));
-  }, []);
-
-  // Auth header for admin-only requests.
-  const authHeaders = () => ({ headers: { "X-Admin-Token": adminToken ?? "" } });
-
   // ── Admin login ──
   const handleLogin = async () => {
     if (!passwordInput.trim()) return;
     setLoginLoading(true);
     setLoginError("");
     try {
-      const res = await apiClient.admin_login({ password: passwordInput });
-      const data = await res.json();
-      if (data.token) {
-        setAdminToken(data.token);
-        setIsAdmin(true);
-        localStorage.setItem(ADMIN_TOKEN_KEY, data.token);
+      if (await login(passwordInput)) {
         setLoginOpen(false);
         setPasswordInput("");
         toast.success("Admin mode enabled");
@@ -151,12 +124,7 @@ export default function CalendarPage() {
 
   // ── Admin logout ──
   const handleLogout = async () => {
-    if (adminToken) {
-      try { await apiClient.admin_logout({ token: adminToken }); } catch { /* ignore */ }
-    }
-    setIsAdmin(false);
-    setAdminToken(null);
-    localStorage.removeItem(ADMIN_TOKEN_KEY);
+    await logout();
     toast.success("Admin mode disabled");
   };
 
