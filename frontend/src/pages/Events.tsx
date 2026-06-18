@@ -3,8 +3,9 @@ import { apiClient } from "app";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Calendar, MapPin, Clock } from "lucide-react";
+import { Calendar, MapPin, Clock, Bell } from "lucide-react";
 import { useNavigate } from "react-router-dom";
+import { subscriptionFeedWebcal } from "utils/calendarLinks";
 import type { ChurchEvent } from "../apiclient/data-contracts";
 
 // Convert API event recurrence/date into a human-readable string
@@ -179,11 +180,24 @@ export default function Events() {
                   Register for Upcoming Events
                 </h2>
                 <p className="text-white/90 mb-6">
-                  Don't miss out on our special events and gatherings. Sign up to
-                  receive notifications and reserve your spot at our upcoming church
-                  activities.
+                  Don't miss out on our special events and gatherings. Subscribe to our
+                  calendar and every event syncs to your phone or computer automatically —
+                  with reminders before each one.
                 </p>
-                <Button className="bg-white text-purple-900 hover:bg-white/90">Sign Up Now</Button>
+                <div className="flex flex-wrap gap-3">
+                  <a href={subscriptionFeedWebcal()}>
+                    <Button className="bg-white text-purple-900 hover:bg-white/90">
+                      <Bell className="mr-2 h-4 w-4" /> Subscribe for Reminders
+                    </Button>
+                  </a>
+                  <Button
+                    variant="outline"
+                    className="border-white/40 bg-transparent text-white hover:bg-white/10"
+                    onClick={() => navigate("/calendarpage")}
+                  >
+                    More Options
+                  </Button>
+                </div>
               </div>
               <div className="relative hidden md:block">
                 <img
