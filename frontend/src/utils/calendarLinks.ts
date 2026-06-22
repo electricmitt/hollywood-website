@@ -30,6 +30,62 @@ export interface CalendarEventInput {
   description?: string;
 }
 
+/** Schedule fields shared by the API contract and the calendar's event type. */
+export interface ScheduleLike {
+  date?: string | null;
+  dateRange?: { start: string; end: string } | null;
+  recurrence?: { type: string; dayOfWeek?: number | null } | null;
+}
+
+const DAY_NAMES_FULL = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
+
+/** Parse a YYYY-MM-DD string as a local date (no timezone shift). */
+function parseLocalDate(iso: string): Date {
+  const [y, m, d] = iso.split("-").map(Number);
+  return new Date(y, m - 1, d);
+}
+
+/** Human-readable schedule, e.g. "Every Sunday" or "2026-04-13 – 2026-04-20". */
+export function formatSchedule(ev: ScheduleLike): string {
+  const dow = ev.recurrence?.dayOfWeek;
+  if (ev.recurrence?.type === "weekly" && dow != null) return `Every ${DAY_NAMES_FULL[dow]}`;
+  if (ev.recurrence?.type === "monthly-last" && dow != null) return `Last ${DAY_NAMES_FULL[dow]} of each month`;
+  if (ev.dateRange) return `${ev.dateRange.start} – ${ev.dateRange.end}`;
+  if (ev.date) return ev.date;
+  return "";
+}
+
+function firstOnOrAfter(d: Date, dow: number): Date {
+  const out = new Date(d);
+  for (let i = 0; i < 7; i++) {
+    if (out.getDay() === dow) return out;
+    out.setDate(out.getDate() + 1);
+  }
+  return out;
+}
+
+function lastWeekdayOfMonth(year: number, month: number, dow: number): Date {
+  const last = new Date(year, month + 1, 0); // last day of `month`
+  while (last.getDay() !== dow) last.setDate(last.getDate() - 1);
+  return last;
+}
+
+/** The next (or current) occurrence date for an event, for "add to calendar". */
+export function nextOccurrence(ev: ScheduleLike): Date {
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  if (ev.date) return parseLocalDate(ev.date);
+  if (ev.dateRange) return parseLocalDate(ev.dateRange.start);
+  const dow = ev.recurrence?.dayOfWeek;
+  if (ev.recurrence?.type === "weekly" && dow != null) return firstOnOrAfter(today, dow);
+  if (ev.recurrence?.type === "monthly-last" && dow != null) {
+    const thisMonth = lastWeekdayOfMonth(today.getFullYear(), today.getMonth(), dow);
+    if (thisMonth >= today) return thisMonth;
+    return lastWeekdayOfMonth(today.getFullYear(), today.getMonth() + 1, dow);
+  }
+  return today;
+}
+
 type HM = { h: number; m: number };
 
 const TIME_RE = /(\d{1,2}):(\d{2})\s*([AaPp][Mm])/g;
