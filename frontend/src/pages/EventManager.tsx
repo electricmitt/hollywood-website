@@ -1,65 +1,24 @@
 import { useEffect, useState } from "react";
 import { apiClient } from "app";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Textarea } from "@/components/ui/textarea";
-import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Switch } from "@/components/ui/switch";
-import { Separator } from "@/components/ui/separator";
 import { Pencil, Trash2, Plus, Calendar, MapPin, Clock, AlertCircle, Lock } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { toast } from "sonner";
 import { useAdminSession } from "utils/useAdminSession";
-import type { ChurchEvent, CreateEventRequest } from "../apiclient/data-contracts";
-
-const COLOR_OPTIONS = [
-  { label: "Indigo", value: "bg-indigo-500" },
-  { label: "Purple", value: "bg-purple-500" },
-  { label: "Emerald", value: "bg-emerald-500" },
-  { label: "Amber", value: "bg-amber-500" },
-  { label: "Rose", value: "bg-rose-500" },
-  { label: "Sky", value: "bg-sky-500" },
-  { label: "Orange", value: "bg-orange-500" },
-  { label: "Teal", value: "bg-teal-500" },
-];
-
-const DAY_NAMES = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
-
-type ScheduleType = "weekly" | "monthly-last" | "one-off" | "date-range";
-
-const emptyForm = (): CreateEventRequest => ({
-  title: "",
-  time: "",
-  location: "",
-  description: "",
-  color: "bg-indigo-500",
-  featured: false,
-  imageUrl: "",
-  date: null,
-  dateRange: null,
-  recurrence: null,
-});
+import { formatSchedule } from "utils/calendarLinks";
+import { EventFormDialog } from "components/EventFormDialog";
+import type { ChurchEvent } from "../apiclient/data-contracts";
 
 export default function EventManager() {
   const navigate = useNavigate();
   const { adminToken, authChecked, authHeaders } = useAdminSession();
   const [events, setEvents] = useState<ChurchEvent[]>([]);
   const [loading, setLoading] = useState(true);
-  const [saving, setSaving] = useState(false);
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editingEvent, setEditingEvent] = useState<ChurchEvent | null>(null);
   const [deleteConfirmId, setDeleteConfirmId] = useState<number | null>(null);
-
-  // Form state
-  const [form, setForm] = useState<CreateEventRequest>(emptyForm());
-  const [scheduleType, setScheduleType] = useState<ScheduleType>("weekly");
-  const [recurDay, setRecurDay] = useState<number>(6);
-  const [oneOffDate, setOneOffDate] = useState("");
-  const [rangeStart, setRangeStart] = useState("");
-  const [rangeEnd, setRangeEnd] = useState("");
 
   const loadEvents = async () => {
     try {
@@ -75,97 +34,8 @@ export default function EventManager() {
 
   useEffect(() => { loadEvents(); }, []);
 
-  const openAdd = () => {
-    setEditingEvent(null);
-    setForm(emptyForm());
-    setScheduleType("weekly");
-    setRecurDay(6);
-    setOneOffDate("");
-    setRangeStart("");
-    setRangeEnd("");
-    setDialogOpen(true);
-  };
-
-  const openEdit = (event: ChurchEvent) => {
-    setEditingEvent(event);
-    setForm({
-      title: event.title,
-      time: event.time,
-      location: event.location,
-      description: event.description,
-      color: event.color ?? "bg-indigo-500",
-      featured: event.featured ?? false,
-      imageUrl: event.imageUrl ?? "",
-      date: event.date ?? null,
-      dateRange: event.dateRange ?? null,
-      recurrence: event.recurrence ?? null,
-    });
-    // Determine schedule type from event
-    if (event.recurrence?.type === "weekly") {
-      setScheduleType("weekly");
-      setRecurDay(event.recurrence.dayOfWeek ?? 6);
-    } else if (event.recurrence?.type === "monthly-last") {
-      setScheduleType("monthly-last");
-      setRecurDay(event.recurrence.dayOfWeek ?? 6);
-    } else if (event.dateRange) {
-      setScheduleType("date-range");
-      setRangeStart(event.dateRange.start);
-      setRangeEnd(event.dateRange.end);
-    } else {
-      setScheduleType("one-off");
-      setOneOffDate(event.date ?? "");
-    }
-    setDialogOpen(true);
-  };
-
-  const buildPayload = (): CreateEventRequest => {
-    const base = {
-      title: form.title,
-      time: form.time,
-      location: form.location,
-      description: form.description,
-      color: form.color,
-      featured: form.featured,
-      imageUrl: form.imageUrl || null,
-      date: null as string | null,
-      dateRange: null as { start: string; end: string } | null,
-      recurrence: null as { type: string; dayOfWeek?: number } | null,
-    };
-    if (scheduleType === "weekly") {
-      base.recurrence = { type: "weekly", dayOfWeek: recurDay };
-    } else if (scheduleType === "monthly-last") {
-      base.recurrence = { type: "monthly-last", dayOfWeek: recurDay };
-    } else if (scheduleType === "one-off") {
-      base.date = oneOffDate;
-    } else if (scheduleType === "date-range") {
-      base.dateRange = { start: rangeStart, end: rangeEnd };
-    }
-    return base;
-  };
-
-  const handleSave = async () => {
-    if (!form.title.trim() || !form.time.trim() || !form.location.trim()) {
-      toast.error("Title, time, and location are required");
-      return;
-    }
-    setSaving(true);
-    try {
-      const payload = buildPayload();
-      if (editingEvent) {
-        await apiClient.update_event({ eventId: editingEvent.id }, payload, authHeaders());
-        toast.success("Event updated");
-      } else {
-        await apiClient.create_event(payload, authHeaders());
-        toast.success("Event created");
-      }
-      setDialogOpen(false);
-      await loadEvents();
-    } catch {
-      toast.error("Failed to save event. Your admin session may have expired — log in again.");
-    } finally {
-      setSaving(false);
-    }
-  };
+  const openAdd = () => { setEditingEvent(null); setDialogOpen(true); };
+  const openEdit = (event: ChurchEvent) => { setEditingEvent(event); setDialogOpen(true); };
 
   const handleDelete = async (id: number) => {
     try {
@@ -176,14 +46,6 @@ export default function EventManager() {
     } catch {
       toast.error("Failed to delete event. Your admin session may have expired — log in again.");
     }
-  };
-
-  const scheduleLabel = (event: ChurchEvent) => {
-    if (event.recurrence?.type === "weekly") return `Every ${DAY_NAMES[event.recurrence.dayOfWeek ?? 0]}`;
-    if (event.recurrence?.type === "monthly-last") return `Last ${DAY_NAMES[event.recurrence.dayOfWeek ?? 0]} of month`;
-    if (event.dateRange) return `${event.dateRange.start} → ${event.dateRange.end}`;
-    if (event.date) return event.date;
-    return "—";
   };
 
   // Wait for the session check before rendering anything, so non-admins never
@@ -256,7 +118,7 @@ export default function EventManager() {
                     {event.featured && <Badge variant="secondary" className="text-xs">Featured</Badge>}
                   </div>
                   <div className="flex flex-wrap gap-x-4 gap-y-1 text-sm text-muted-foreground">
-                    <span className="flex items-center gap-1"><Calendar size={13} />{scheduleLabel(event)}</span>
+                    <span className="flex items-center gap-1"><Calendar size={13} />{formatSchedule(event) || "—"}</span>
                     <span className="flex items-center gap-1"><Clock size={13} />{event.time}</span>
                     <span className="flex items-center gap-1"><MapPin size={13} />{event.location}</span>
                   </div>
@@ -277,128 +139,13 @@ export default function EventManager() {
       </div>
 
       {/* Add / Edit Dialog */}
-      <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
-        <DialogContent className="max-w-xl max-h-[90vh] overflow-y-auto">
-          <DialogHeader>
-            <DialogTitle>{editingEvent ? "Edit Event" : "Add New Event"}</DialogTitle>
-          </DialogHeader>
-
-          <div className="space-y-5 py-2">
-            {/* Title */}
-            <div className="space-y-1.5">
-              <Label>Title *</Label>
-              <Input placeholder="e.g. Sabbath Worship" value={form.title} onChange={e => setForm(f => ({ ...f, title: e.target.value }))} />
-            </div>
-
-            {/* Schedule type */}
-            <div className="space-y-1.5">
-              <Label>Schedule Type *</Label>
-              <Select value={scheduleType} onValueChange={v => setScheduleType(v as ScheduleType)}>
-                <SelectTrigger><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="weekly">Weekly (repeats every week)</SelectItem>
-                  <SelectItem value="monthly-last">Last [Day] of Each Month</SelectItem>
-                  <SelectItem value="one-off">Single Date</SelectItem>
-                  <SelectItem value="date-range">Date Range (multi-day)</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-
-            {/* Schedule detail */}
-            {(scheduleType === "weekly" || scheduleType === "monthly-last") && (
-              <div className="space-y-1.5">
-                <Label>Day of Week *</Label>
-                <Select value={String(recurDay)} onValueChange={v => setRecurDay(Number(v))}>
-                  <SelectTrigger><SelectValue /></SelectTrigger>
-                  <SelectContent>
-                    {DAY_NAMES.map((d, i) => <SelectItem key={i} value={String(i)}>{d}</SelectItem>)}
-                  </SelectContent>
-                </Select>
-              </div>
-            )}
-            {scheduleType === "one-off" && (
-              <div className="space-y-1.5">
-                <Label>Date *</Label>
-                <Input type="date" value={oneOffDate} onChange={e => setOneOffDate(e.target.value)} />
-              </div>
-            )}
-            {scheduleType === "date-range" && (
-              <div className="grid grid-cols-2 gap-3">
-                <div className="space-y-1.5">
-                  <Label>Start Date *</Label>
-                  <Input type="date" value={rangeStart} onChange={e => setRangeStart(e.target.value)} />
-                </div>
-                <div className="space-y-1.5">
-                  <Label>End Date *</Label>
-                  <Input type="date" value={rangeEnd} onChange={e => setRangeEnd(e.target.value)} />
-                </div>
-              </div>
-            )}
-
-            <Separator />
-
-            {/* Time */}
-            <div className="space-y-1.5">
-              <Label>Time *</Label>
-              <Input placeholder="e.g. 11:00 AM - Sunset" value={form.time} onChange={e => setForm(f => ({ ...f, time: e.target.value }))} />
-            </div>
-
-            {/* Location */}
-            <div className="space-y-1.5">
-              <Label>Location *</Label>
-              <Input placeholder="e.g. Main Sanctuary" value={form.location} onChange={e => setForm(f => ({ ...f, location: e.target.value }))} />
-            </div>
-
-            {/* Description */}
-            <div className="space-y-1.5">
-              <Label>Description</Label>
-              <Textarea rows={3} placeholder="Brief description of the event..." value={form.description} onChange={e => setForm(f => ({ ...f, description: e.target.value }))} />
-            </div>
-
-            {/* Image URL */}
-            <div className="space-y-1.5">
-              <Label>Image URL <span className="text-muted-foreground text-xs">(optional)</span></Label>
-              <Input placeholder="https://..." value={form.imageUrl ?? ""} onChange={e => setForm(f => ({ ...f, imageUrl: e.target.value }))} />
-            </div>
-
-            <Separator />
-
-            {/* Color */}
-            <div className="space-y-1.5">
-              <Label>Color</Label>
-              <div className="flex flex-wrap gap-2">
-                {COLOR_OPTIONS.map(c => (
-                  <button
-                    key={c.value}
-                    title={c.label}
-                    onClick={() => setForm(f => ({ ...f, color: c.value }))}
-                    className={`w-7 h-7 rounded-full ${c.value} ring-offset-background transition-all ${
-                      form.color === c.value ? "ring-2 ring-white ring-offset-2 scale-110" : "opacity-70 hover:opacity-100"
-                    }`}
-                  />
-                ))}
-              </div>
-            </div>
-
-            {/* Featured */}
-            <div className="flex items-center gap-3">
-              <Switch
-                id="featured"
-                checked={form.featured ?? false}
-                onCheckedChange={v => setForm(f => ({ ...f, featured: v }))}
-              />
-              <Label htmlFor="featured">Mark as Featured event</Label>
-            </div>
-          </div>
-
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setDialogOpen(false)}>Cancel</Button>
-            <Button onClick={handleSave} disabled={saving}>
-              {saving ? "Saving..." : editingEvent ? "Save Changes" : "Create Event"}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+      <EventFormDialog
+        open={dialogOpen}
+        onOpenChange={setDialogOpen}
+        editingEvent={editingEvent}
+        authHeaders={authHeaders}
+        onSaved={loadEvents}
+      />
 
       {/* Delete Confirmation Dialog */}
       <Dialog open={deleteConfirmId !== null} onOpenChange={() => setDeleteConfirmId(null)}>

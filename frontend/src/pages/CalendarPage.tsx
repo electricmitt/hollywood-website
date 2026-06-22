@@ -3,6 +3,7 @@ import { apiClient } from "app";
 import { ChurchCalendar, type ChurchEvent } from "components/ChurchCalendar";
 import { EventFormDialog } from "components/EventFormDialog";
 import { AdminLoginDialog } from "components/AdminLoginDialog";
+import { EventDetailDialog } from "components/EventDetailDialog";
 import { useNavigate } from "react-router-dom";
 import { ArrowLeft, Plus, AlertCircle, Lock, Unlock, LogOut, Bell, Copy, Check, CalendarPlus } from "lucide-react";
 import { subscriptionFeedUrl, subscriptionFeedWebcal } from "utils/calendarLinks";
@@ -31,6 +32,10 @@ export default function CalendarPage() {
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editingEvent, setEditingEvent] = useState<ChurchEvent | null>(null);
   const [deleteConfirmId, setDeleteConfirmId] = useState<number | null>(null);
+
+  // ── Visitor detail view ──
+  const [detailEvent, setDetailEvent] = useState<ChurchEvent | null>(null);
+  const [detailDate, setDetailDate] = useState<Date | undefined>(undefined);
 
   const loadEvents = async () => {
     try {
@@ -165,9 +170,17 @@ export default function CalendarPage() {
             events={events}
             onEdit={isAdmin ? openEdit : undefined}
             onDelete={isAdmin ? (id) => setDeleteConfirmId(id) : undefined}
+            onViewDetails={(ev, day) => { setDetailDate(day); setDetailEvent(ev); }}
           />
         )}
       </div>
+
+      {/* ── Event Detail (visitor) ── */}
+      <EventDetailDialog
+        event={detailEvent}
+        occurrenceDate={detailDate}
+        onOpenChange={(o) => { if (!o) setDetailEvent(null); }}
+      />
 
       {/* ── Admin Login Dialog ── */}
       <AdminLoginDialog open={loginOpen} onOpenChange={setLoginOpen} login={login} />
