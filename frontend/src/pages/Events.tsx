@@ -6,28 +6,13 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { Calendar, MapPin, Clock, Bell, Lock, LogOut, Plus, Pencil, Trash2, Unlock, AlertCircle } from "lucide-react";
 import { useNavigate } from "react-router-dom";
-import { subscriptionFeedWebcal } from "utils/calendarLinks";
+import { subscriptionFeedWebcal, formatSchedule } from "utils/calendarLinks";
 import { useAdminSession } from "utils/useAdminSession";
 import { EventFormDialog } from "components/EventFormDialog";
 import { AdminLoginDialog } from "components/AdminLoginDialog";
+import { EventDetailDialog } from "components/EventDetailDialog";
 import { toast } from "sonner";
 import type { ChurchEvent } from "../apiclient/data-contracts";
-
-// Convert API event recurrence/date into a human-readable string
-function scheduleLabel(event: ChurchEvent): string {
-  const DAY_NAMES = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
-  if (event.recurrence?.type === "weekly" && event.recurrence.dayOfWeek !== undefined && event.recurrence.dayOfWeek !== null) {
-    return `Every ${DAY_NAMES[event.recurrence.dayOfWeek]}`;
-  }
-  if (event.recurrence?.type === "monthly-last" && event.recurrence.dayOfWeek !== undefined && event.recurrence.dayOfWeek !== null) {
-    return `Last ${DAY_NAMES[event.recurrence.dayOfWeek]} of each month`;
-  }
-  if (event.dateRange) {
-    return `${event.dateRange.start} – ${event.dateRange.end}`;
-  }
-  if (event.date) return event.date;
-  return "";
-}
 
 export default function Events() {
   const navigate = useNavigate();
@@ -42,6 +27,9 @@ export default function Events() {
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editingEvent, setEditingEvent] = useState<ChurchEvent | null>(null);
   const [deleteConfirmId, setDeleteConfirmId] = useState<number | null>(null);
+
+  // ── Visitor detail view ──
+  const [detailEvent, setDetailEvent] = useState<ChurchEvent | null>(null);
 
   const loadEvents = async () => {
     try {
@@ -170,7 +158,7 @@ export default function Events() {
                         <div className="flex flex-col space-y-3 mb-4">
                           <div className="flex items-center text-muted-foreground">
                             <Calendar size={16} className="mr-2" />
-                            <span>{scheduleLabel(event)}</span>
+                            <span>{formatSchedule(event)}</span>
                           </div>
                           <div className="flex items-center text-muted-foreground">
                             <Clock size={16} className="mr-2" />
@@ -183,7 +171,7 @@ export default function Events() {
                         </div>
                         <p className="text-muted-foreground mb-6 flex-grow">{event.description}</p>
                         {adminActions(event)}
-                        <Button className="w-full mt-auto">Learn More</Button>
+                        <Button className="w-full mt-auto" onClick={() => setDetailEvent(event)}>Learn More</Button>
                       </CardContent>
                     </div>
                   </Card>
@@ -217,7 +205,7 @@ export default function Events() {
                       <div className="flex flex-col space-y-2 mb-4">
                         <div className="flex items-center text-sm text-muted-foreground">
                           <Calendar size={14} className="mr-2" />
-                          <span>{scheduleLabel(event)}</span>
+                          <span>{formatSchedule(event)}</span>
                         </div>
                         <div className="flex items-center text-sm text-muted-foreground">
                           <Clock size={14} className="mr-2" />
@@ -230,7 +218,7 @@ export default function Events() {
                       </div>
                       <p className="text-muted-foreground mb-4 flex-grow">{event.description}</p>
                       {adminActions(event)}
-                      <Button variant="outline" className="w-full mt-auto">View Details</Button>
+                      <Button variant="outline" className="w-full mt-auto" onClick={() => setDetailEvent(event)}>View Details</Button>
                     </CardContent>
                   </Card>
                 ))}
@@ -298,6 +286,13 @@ export default function Events() {
           </div>
         </section>
       </div>
+
+      {/* ── Event Detail (visitor) ── */}
+      <EventDetailDialog
+        event={detailEvent}
+        onOpenChange={(o) => { if (!o) setDetailEvent(null); }}
+        onViewCalendar={() => { setDetailEvent(null); navigate("/calendarpage"); }}
+      />
 
       {/* ── Admin Login Dialog ── */}
       <AdminLoginDialog open={loginOpen} onOpenChange={setLoginOpen} login={login} />
