@@ -1,15 +1,8 @@
 import { useState, useMemo } from "react";
-import { ChevronLeft, ChevronRight, MapPin, Clock, X, Pencil, Trash2, CalendarPlus } from "lucide-react";
+import { ChevronLeft, ChevronRight, MapPin, Clock, X, Pencil, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import {
-  DropdownMenu,
-  DropdownMenuTrigger,
-  DropdownMenuContent,
-  DropdownMenuItem,
-} from "@/components/ui/dropdown-menu";
 import { cn } from "@/lib/utils";
-import { googleCalendarUrl, downloadEventIcs } from "utils/calendarLinks";
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -36,6 +29,8 @@ interface Props {
   events: ChurchEvent[];
   onEdit?: (event: ChurchEvent) => void;
   onDelete?: (id: number) => void;
+  /** Open the shared detail dialog for an event on a specific day. */
+  onViewDetails?: (event: ChurchEvent, occurrenceDate: Date) => void;
 }
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
@@ -102,7 +97,7 @@ const EVENT_COLORS = [
 
 // ─── Component ───────────────────────────────────────────────────────────────
 
-export function ChurchCalendar({ events, onEdit, onDelete }: Props) {
+export function ChurchCalendar({ events, onEdit, onDelete, onViewDetails }: Props) {
   const today = new Date();
   const [viewYear, setViewYear] = useState(today.getFullYear());
   const [viewMonth, setViewMonth] = useState(today.getMonth());
@@ -324,7 +319,16 @@ export function ChurchCalendar({ events, onEdit, onDelete }: Props) {
                         <div className={cn("w-1 self-stretch rounded-full flex-shrink-0 mt-0.5", eventColors[ev.id])} />
                         <div className="flex-1 min-w-0">
                           <div className="flex items-start justify-between gap-2 mb-2">
-                            <h5 className="font-semibold text-sm leading-snug">{ev.title}</h5>
+                            {onViewDetails && selectedDay ? (
+                              <button
+                                onClick={() => onViewDetails(ev, selectedDay)}
+                                className="font-semibold text-sm leading-snug text-left hover:text-indigo-400 transition-colors"
+                              >
+                                {ev.title}
+                              </button>
+                            ) : (
+                              <h5 className="font-semibold text-sm leading-snug">{ev.title}</h5>
+                            )}
                             {(onEdit || onDelete) && (
                               <div className="flex items-center gap-1 flex-shrink-0">
                                 {onEdit && (
@@ -360,28 +364,16 @@ export function ChurchCalendar({ events, onEdit, onDelete }: Props) {
                           </div>
                           <p className="text-xs text-muted-foreground leading-relaxed">{ev.description}</p>
 
-                          {/* Add-to-calendar (visitor-facing) */}
-                          {selectedDay && (
-                            <DropdownMenu>
-                              <DropdownMenuTrigger asChild>
-                                <Button variant="outline" size="sm" className="mt-3 h-7 text-xs">
-                                  <CalendarPlus size={13} className="mr-1.5" />
-                                  Add to Calendar
-                                </Button>
-                              </DropdownMenuTrigger>
-                              <DropdownMenuContent align="start">
-                                <DropdownMenuItem
-                                  onClick={() =>
-                                    window.open(googleCalendarUrl(ev, selectedDay), "_blank", "noopener,noreferrer")
-                                  }
-                                >
-                                  Google Calendar
-                                </DropdownMenuItem>
-                                <DropdownMenuItem onClick={() => downloadEventIcs(ev, selectedDay)}>
-                                  Apple / Outlook (.ics)
-                                </DropdownMenuItem>
-                              </DropdownMenuContent>
-                            </DropdownMenu>
+                          {/* Open full details (with add-to-calendar) */}
+                          {onViewDetails && selectedDay && (
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              className="mt-3 h-7 text-xs"
+                              onClick={() => onViewDetails(ev, selectedDay)}
+                            >
+                              View details
+                            </Button>
                           )}
                         </div>
                       </div>

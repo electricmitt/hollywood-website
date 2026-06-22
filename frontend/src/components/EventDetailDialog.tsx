@@ -24,13 +24,15 @@ export interface DetailEvent {
 interface Props {
   event: DetailEvent | null;
   onOpenChange: (open: boolean) => void;
-  /** Called when the user clicks "View in Calendar". */
-  onViewCalendar: () => void;
+  /** Specific occurrence to add to calendar (e.g. the day clicked on the calendar). Defaults to the next occurrence. */
+  occurrenceDate?: Date;
+  /** When provided, shows a "View in Calendar" button that calls this. */
+  onViewCalendar?: () => void;
 }
 
-/** Read-only event details with add-to-calendar and a link to the full calendar. */
-export function EventDetailDialog({ event, onOpenChange, onViewCalendar }: Props) {
-  const occurrence = event ? nextOccurrence(event) : new Date();
+/** Read-only event details with add-to-calendar and an optional link to the full calendar. */
+export function EventDetailDialog({ event, onOpenChange, occurrenceDate, onViewCalendar }: Props) {
+  const occurrence = occurrenceDate ?? (event ? nextOccurrence(event) : new Date());
 
   return (
     <Dialog open={event !== null} onOpenChange={onOpenChange}>
@@ -65,9 +67,11 @@ export function EventDetailDialog({ event, onOpenChange, onViewCalendar }: Props
             </div>
 
             <DialogFooter className="flex-col sm:flex-row gap-2">
-              <Button variant="outline" onClick={onViewCalendar} className="w-full sm:w-auto">
-                <CalendarDays className="mr-2 h-4 w-4" /> View in Calendar
-              </Button>
+              {onViewCalendar && (
+                <Button variant="outline" onClick={onViewCalendar} className="w-full sm:w-auto">
+                  <CalendarDays className="mr-2 h-4 w-4" /> View in Calendar
+                </Button>
+              )}
               <DropdownMenu>
                 <DropdownMenuTrigger asChild>
                   <Button className="w-full sm:w-auto">
