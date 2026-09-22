@@ -104,20 +104,15 @@ export default function CalendarPage() {
         {/* Back link */}
         <button
           onClick={() => navigate("/events")}
-          className="flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground transition-colors mb-8 group"
+          className="flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground transition-colors mb-4 group"
         >
           <ArrowLeft size={16} className="group-hover:-translate-x-0.5 transition-transform" />
           Back to Events
         </button>
 
         {/* Header */}
-        <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-4 mb-12">
-          <div>
-            <h1 className="text-4xl font-bold tracking-tighter sm:text-5xl mb-2">Church Calendar</h1>
-            <p className="text-lg text-muted-foreground max-w-2xl">
-              Browse all upcoming services, studies, and special events. Click any date to see what's happening.
-            </p>
-          </div>
+        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-6">
+          <h1 className="text-4xl font-bold tracking-tighter sm:text-5xl">Church Calendar</h1>
 
           {/* Admin controls */}
           <div className="flex items-center gap-2 flex-shrink-0">
@@ -164,7 +159,7 @@ export default function CalendarPage() {
 
         {/* Calendar */}
         {loading ? (
-          <Skeleton className="h-[600px] w-full rounded-xl" />
+          <Skeleton className="h-[700px] w-full rounded-xl" />
         ) : (
           <ChurchCalendar
             events={events}

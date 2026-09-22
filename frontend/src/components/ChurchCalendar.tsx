@@ -206,7 +206,7 @@ export function ChurchCalendar({ events, onEdit, onDelete, onViewDetails }: Prop
               return (
                 <div
                   key={`blank-${idx}`}
-                  className="bg-card/40 min-h-[80px] md:min-h-[100px]"
+                  className="bg-card/40 min-h-[96px] md:min-h-[120px] xl:min-h-[132px]"
                 />
               );
             }
@@ -220,7 +220,7 @@ export function ChurchCalendar({ events, onEdit, onDelete, onViewDetails }: Prop
                 key={day.toISOString()}
                 onClick={() => setSelectedDay(selected ? null : day)}
                 className={cn(
-                  "relative bg-card min-h-[80px] md:min-h-[100px] p-2 text-left transition-all duration-150 focus:outline-none focus:ring-2 focus:ring-indigo-500",
+                  "relative bg-card min-h-[96px] md:min-h-[120px] xl:min-h-[132px] p-2 text-left transition-all duration-150 focus:outline-none focus:ring-2 focus:ring-indigo-500",
                   selected
                     ? "bg-indigo-950/80 ring-2 ring-inset ring-indigo-500"
                     : "hover:bg-white/5",
