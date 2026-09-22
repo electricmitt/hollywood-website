@@ -1,7 +1,9 @@
-import databutton as db
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Depends
 from pydantic import BaseModel
 from typing import Optional
+
+from app.libs.storage import json_get, json_put
+from app.apis.admin_auth import require_admin
 
 router = APIRouter()
 
@@ -18,50 +20,54 @@ def get_all_overrides():
     """
     Retrieve all sermon overrides from storage.
     """
-    return db.storage.json.get(STORAGE_KEY, default={})
+    return json_get(STORAGE_KEY, default={})
 
 @router.get("/sermon-overrides/{video_id}")
 def get_override(video_id: str):
     """
     Retrieve a specific sermon override from storage.
     """
-    overrides = db.storage.json.get(STORAGE_KEY, default={})
+    overrides = json_get(STORAGE_KEY, default={})
     return overrides.get(video_id, {})
 
-@router.post("/sermon-overrides/{video_id}")
+@router.post("/sermon-overrides/{video_id}", dependencies=[Depends(require_admin)])
 def save_override(video_id: str, override: SermonOverride):
     """
     Save or update a sermon override in storage.
     """
     try:
-        overrides = db.storage.json.get(STORAGE_KEY, default={})
-        
+        overrides = json_get(STORAGE_KEY, default={})
+
         # Update existing override or create a new one
         if video_id not in overrides:
             overrides[video_id] = {}
-            
-        update_data = override.dict(exclude_unset=True)
+
+        update_data = override.model_dump(exclude_unset=True)
         overrides[video_id].update(update_data)
-        
-        db.storage.json.put(STORAGE_KEY, overrides)
+
+        json_put(STORAGE_KEY, overrides)
         return {"message": "Override saved successfully."}
+    except HTTPException:
+        raise
     except Exception as e:
         print(f"An error occurred while saving override: {e}")
         raise HTTPException(status_code=500, detail="Failed to save sermon override.")
 
-@router.delete("/sermon-overrides/{video_id}")
+@router.delete("/sermon-overrides/{video_id}", dependencies=[Depends(require_admin)])
 def delete_override(video_id: str):
     """
     Delete a sermon override from storage.
     """
     try:
-        overrides = db.storage.json.get(STORAGE_KEY, default={})
+        overrides = json_get(STORAGE_KEY, default={})
         if video_id in overrides:
             del overrides[video_id]
-            db.storage.json.put(STORAGE_KEY, overrides)
+            json_put(STORAGE_KEY, overrides)
             return {"message": "Override deleted successfully."}
         else:
             raise HTTPException(status_code=404, detail="Override not found.")
+    except HTTPException:
+        raise
     except Exception as e:
         print(f"An error occurred while deleting override: {e}")
         raise HTTPException(status_code=500, detail="Failed to delete sermon override.")

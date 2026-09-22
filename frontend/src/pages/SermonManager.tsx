@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from "react";
+import { useNavigate } from "react-router-dom";
 import { apiClient } from "app";
 import { GetSermonsSermons, SermonOverride } from "types";
 import { Button } from "@/components/ui/button";
@@ -12,9 +13,13 @@ import {
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
+import { Lock } from "lucide-react";
 import { toast } from "sonner";
+import { useAdminSession } from "utils/useAdminSession";
 
 const SermonManager: React.FC = () => {
+  const navigate = useNavigate();
+  const { adminToken, authChecked, authHeaders } = useAdminSession();
   const [sermons, setSermons] = useState<GetSermonsSermons[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -65,15 +70,44 @@ const SermonManager: React.FC = () => {
 
     try {
       // The API client expects the parameter to be camelCase (videoId)
-      await apiClient.save_override({ videoId: selectedSermon.video_id }, formData);
+      await apiClient.save_override({ videoId: selectedSermon.video_id }, formData, authHeaders());
       toast.success("Sermon details updated successfully!");
       setIsModalOpen(false);
       fetchSermons(); // Refresh the list
     } catch (error) {
       console.error("Save failed:", error);
-      toast.error("Failed to save changes. Please try again.");
+      toast.error("Failed to save changes. Your admin session may have expired — log in again.");
     }
   };
+
+  // Wait for the session check before rendering, so non-admins never see the UI.
+  if (!authChecked) {
+    return (
+      <div className="flex justify-center items-center h-screen">
+        <p className="text-muted-foreground">Checking access…</p>
+      </div>
+    );
+  }
+
+  // Admin-only gate: without a valid session, send users to the calendar login.
+  if (!adminToken) {
+    return (
+      <div className="min-h-screen bg-background pt-24 pb-16">
+        <div className="container px-4 md:px-6 mx-auto max-w-md">
+          <div className="bg-card border border-border rounded-xl p-8 flex flex-col items-center text-center gap-4">
+            <div className="w-12 h-12 rounded-full bg-amber-500/10 flex items-center justify-center">
+              <Lock className="h-6 w-6 text-amber-500" />
+            </div>
+            <h1 className="text-2xl font-bold">Admin Access Required</h1>
+            <p className="text-muted-foreground text-sm">
+              Sign in as an administrator from the calendar to manage sermon details.
+            </p>
+            <Button onClick={() => navigate("/calendarpage")}>Go to Calendar to Log In</Button>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   if (loading) {
     return (
