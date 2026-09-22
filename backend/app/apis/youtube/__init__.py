@@ -1,11 +1,12 @@
+import os
+import re
 from fastapi import APIRouter, HTTPException, Depends
 from googleapiclient.discovery import build
-from google.oauth2.credentials import Credentials
-import databutton as db
 from pydantic import BaseModel
 from youtube_transcript_api import YouTubeTranscriptApi
 from youtube_transcript_api.formatters import JSONFormatter
-import re
+
+from app.libs.storage import json_get
 
 router = APIRouter()
 
@@ -13,14 +14,14 @@ YOUTUBE_API_SERVICE_NAME = "youtube"
 YOUTUBE_API_VERSION = "v3"
 
 def get_youtube_service():
-    api_key = db.secrets.get("YOUTUBE_API_KEY")
+    api_key = os.environ.get("YOUTUBE_API_KEY")
     if not api_key:
         raise HTTPException(status_code=500, detail="YouTube API key is not set.")
     return build(YOUTUBE_API_SERVICE_NAME, YOUTUBE_API_VERSION, developerKey=api_key)
 
 def get_sermon_details(youtube, playlist_id):
     sermons = []
-    overrides = db.storage.json.get('sermon_overrides', default={})
+    overrides = json_get('sermon_overrides', default={})
     next_page_token = None
     while True:
         pl_request = youtube.playlistItems().list(
