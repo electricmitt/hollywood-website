@@ -64,8 +64,26 @@ export default function Events() {
     }
   };
 
-  const featured = events.filter(e => e.featured);
-  const regular = events.filter(e => !e.featured);
+  // Hide events that have already finished. Recurring events are ongoing and
+  // always shown; a one-off is kept while its date is today or later; a
+  // date-range is kept until its end date passes. (The calendar still shows
+  // past events when you browse earlier months.)
+  const isUpcoming = (e: ChurchEvent): boolean => {
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const parse = (iso: string) => {
+      const [y, m, d] = iso.split("-").map(Number);
+      return new Date(y, m - 1, d);
+    };
+    if (e.recurrence) return true;
+    if (e.dateRange) return parse(e.dateRange.end) >= today;
+    if (e.date) return parse(e.date) >= today;
+    return true;
+  };
+
+  const upcoming = events.filter(isUpcoming);
+  const featured = upcoming.filter(e => e.featured);
+  const regular = upcoming.filter(e => !e.featured);
 
   // Small admin edit/delete row shown on each card when logged in.
   const adminActions = (event: ChurchEvent) => (
