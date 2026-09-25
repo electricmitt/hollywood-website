@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { apiClient } from "app";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -8,7 +8,9 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
 import { Separator } from "@/components/ui/separator";
+import { Sparkles, Loader2 } from "lucide-react";
 import { toast } from "sonner";
+import { apiUrl } from "utils/calendarLinks";
 import type { CreateEventRequest } from "../apiclient/data-contracts";
 
 const COLOR_OPTIONS = [
@@ -74,6 +76,8 @@ export function EventFormDialog({ open, onOpenChange, editingEvent, authHeaders,
   const [rangeStart, setRangeStart] = useState("");
   const [rangeEnd, setRangeEnd] = useState("");
   const [saving, setSaving] = useState(false);
+  const [parsing, setParsing] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   // Populate (edit) or reset (add) the form each time the dialog opens.
   useEffect(() => {
@@ -142,6 +146,47 @@ export function EventFormDialog({ open, onOpenChange, editingEvent, authHeaders,
     return base;
   };
 
+  // Read a flyer image, send it to the backend for AI extraction, and pre-fill.
+  const handleFlyer = async (file: File) => {
+    if (!file.type.startsWith("image/")) {
+      toast.error("Please choose an image file (JPG, PNG, or WEBP).");
+      return;
+    }
+    setParsing(true);
+    try {
+      const dataUrl: string = await new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(reader.result as string);
+        reader.onerror = reject;
+        reader.readAsDataURL(file);
+      });
+      const base64 = dataUrl.split(",")[1];
+      const res = await fetch(apiUrl("/events/parse-flyer"), {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...authHeaders().headers },
+        body: JSON.stringify({ image_base64: base64, media_type: file.type }),
+      });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const p = await res.json();
+      setForm(f => ({
+        ...f,
+        title: p.title || f.title,
+        time: p.time || f.time,
+        location: p.location || f.location,
+        description: p.description || f.description,
+      }));
+      if (p.date) {
+        setScheduleType("one-off");
+        setOneOffDate(p.date);
+      }
+      toast.success("Flyer read — review the details, then save.");
+    } catch {
+      toast.error("Couldn't read the flyer. Fill the form manually, or check the AI key is set.");
+    } finally {
+      setParsing(false);
+    }
+  };
+
   const handleSave = async () => {
     if (!form.title.trim() || !form.time.trim() || !form.location.trim()) {
       toast.error("Title, time, and location are required");
@@ -172,6 +217,24 @@ export function EventFormDialog({ open, onOpenChange, editingEvent, authHeaders,
         <DialogHeader>
           <DialogTitle>{editingEvent ? "Edit Event" : "Add New Event"}</DialogTitle>
         </DialogHeader>
+
+        {/* Flyer auto-fill */}
+        <div className="rounded-lg border border-dashed border-indigo-500/40 bg-indigo-500/5 p-3 flex items-center justify-between gap-3">
+          <div className="min-w-0">
+            <p className="text-sm font-medium flex items-center gap-1.5"><Sparkles className="h-3.5 w-3.5 text-indigo-400" /> Auto-fill from a flyer</p>
+            <p className="text-xs text-muted-foreground">Upload an event flyer and we'll read the details for you to review.</p>
+          </div>
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept="image/*"
+            className="hidden"
+            onChange={e => { const f = e.target.files?.[0]; if (f) handleFlyer(f); e.target.value = ""; }}
+          />
+          <Button type="button" variant="outline" size="sm" disabled={parsing} onClick={() => fileInputRef.current?.click()} className="flex-shrink-0">
+            {parsing ? <><Loader2 className="mr-1.5 h-4 w-4 animate-spin" /> Reading…</> : "Upload flyer"}
+          </Button>
+        </div>
 
         <div className="space-y-5 py-2">
           <div className="space-y-1.5">
