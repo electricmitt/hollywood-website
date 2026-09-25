@@ -454,7 +454,14 @@ def parse_flyer(body: FlyerRequest) -> ParsedFlyer:
 
     if resp.status_code != 200:
         print(f"Anthropic API error {resp.status_code}: {resp.text[:500]}")
-        raise HTTPException(status_code=502, detail="The AI service returned an error.")
+        detail = "The AI service returned an error."
+        try:
+            msg = resp.json().get("error", {}).get("message")
+            if msg:
+                detail = f"AI service error ({resp.status_code}): {msg}"
+        except Exception:
+            pass
+        raise HTTPException(status_code=502, detail=detail)
 
     try:
         text = resp.json()["content"][0]["text"].strip()
