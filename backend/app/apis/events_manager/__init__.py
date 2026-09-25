@@ -1,4 +1,7 @@
+import os
 import re
+import json
+import httpx
 from datetime import date, datetime, timedelta, timezone
 from fastapi import APIRouter, HTTPException, Depends, Response
 from pydantic import BaseModel
@@ -372,4 +375,102 @@ def calendar_feed() -> Response:
         content=body,
         media_type="text/calendar; charset=utf-8",
         headers={"Content-Disposition": 'inline; filename="hollywood-church.ics"'},
+    )
+
+
+# ─── Flyer parsing (admin, AI vision) ─────────────────────────────────────────
+
+class FlyerRequest(BaseModel):
+    image_base64: str
+    media_type: str  # e.g. "image/jpeg", "image/png", "image/webp"
+
+
+class ParsedFlyer(BaseModel):
+    title: str = ""
+    date: Optional[str] = None  # YYYY-MM-DD
+    time: str = ""
+    location: str = ""
+    description: str = ""
+
+
+_FLYER_PROMPT = (
+    "You are extracting event details from a church event flyer image. "
+    "Today's date is {today}. Return ONLY a JSON object (no prose, no code fences) "
+    "with exactly these keys: title, date, time, location, description.\n"
+    "- title: the event name.\n"
+    "- date: the single event date as YYYY-MM-DD. If the flyer shows a date with no year, "
+    "pick the nearest FUTURE occurrence relative to today. If no date is shown, use null.\n"
+    "- time: the time exactly as shown (e.g. '7:00 PM' or '10:00 AM - Sunset'), or an empty string.\n"
+    "- location: the venue or address, or an empty string.\n"
+    "- description: a concise one or two sentence summary, or an empty string."
+)
+
+
+@router.post("/parse-flyer", dependencies=[Depends(require_admin)])
+def parse_flyer(body: FlyerRequest) -> ParsedFlyer:
+    """Extract event fields from an uploaded flyer image using Claude vision."""
+    api_key = os.environ.get("ANTHROPIC_API_KEY")
+    if not api_key:
+        raise HTTPException(status_code=500, detail="ANTHROPIC_API_KEY is not configured on the server.")
+
+    model = os.environ.get("FLYER_MODEL", "claude-sonnet-5")
+    prompt = _FLYER_PROMPT.format(today=date.today().isoformat())
+
+    payload = {
+        "model": model,
+        "max_tokens": 1024,
+        "messages": [
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "type": "image",
+                        "source": {
+                            "type": "base64",
+                            "media_type": body.media_type,
+                            "data": body.image_base64,
+                        },
+                    },
+                    {"type": "text", "text": prompt},
+                ],
+            }
+        ],
+    }
+
+    try:
+        resp = httpx.post(
+            "https://api.anthropic.com/v1/messages",
+            headers={
+                "x-api-key": api_key,
+                "anthropic-version": "2023-06-01",
+                "content-type": "application/json",
+            },
+            json=payload,
+            timeout=60.0,
+        )
+    except Exception as e:
+        print(f"Flyer parse request failed: {e}")
+        raise HTTPException(status_code=502, detail="Could not reach the AI service.")
+
+    if resp.status_code != 200:
+        print(f"Anthropic API error {resp.status_code}: {resp.text[:500]}")
+        raise HTTPException(status_code=502, detail="The AI service returned an error.")
+
+    try:
+        text = resp.json()["content"][0]["text"].strip()
+        # Strip accidental code fences.
+        if text.startswith("```"):
+            text = text.strip("`")
+            text = text[text.find("{"): text.rfind("}") + 1]
+        data = json.loads(text)
+    except Exception as e:
+        print(f"Failed to parse AI response: {e}")
+        raise HTTPException(status_code=502, detail="Could not read event details from the flyer.")
+
+    return ParsedFlyer(
+        title=(data.get("title") or "").strip(),
+        date=(data.get("date") or None),
+        time=(data.get("time") or "").strip(),
+        location=(data.get("location") or "").strip(),
+        description=(data.get("description") or "").strip(),
     )

@@ -12,6 +12,11 @@ function apiBase(): string {
   return `${API_HOST}${API_PATH}`;
 }
 
+/** Build a URL to a backend API path (mirrors the apiClient's base resolution). */
+export function apiUrl(path: string): string {
+  return `${apiBase()}${path}`;
+}
+
 /** Public https URL of the live iCal subscription feed. */
 export function subscriptionFeedUrl(): string {
   return `${apiBase()}/events/calendar.ics`;
