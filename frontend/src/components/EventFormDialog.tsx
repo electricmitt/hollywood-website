@@ -148,13 +148,36 @@ export function EventFormDialog({ open, onOpenChange, editingEvent, authHeaders,
     return base;
   };
 
-  // Read a flyer image, send it to the backend for AI extraction, and pre-fill.
+  // Upload an image file to the backend; returns its hosted URL, or null on failure.
+  const uploadImageFile = async (file: File): Promise<string | null> => {
+    try {
+      const fd = new FormData();
+      fd.append("file", file);
+      const res = await fetch(apiUrl("/events/upload-image"), {
+        method: "POST",
+        headers: { ...authHeaders().headers }, // no Content-Type — browser sets the multipart boundary
+        body: fd,
+      });
+      if (!res.ok) return null;
+      const { url } = await res.json();
+      return url ?? null;
+    } catch {
+      return null;
+    }
+  };
+
+  // Attach the flyer as the event image, then ask the AI to read its details.
+  // The two steps are independent: the image is kept even if reading fails.
   const handleFlyer = async (file: File) => {
     if (!file.type.startsWith("image/")) {
       toast.error("Please choose an image file (JPG, PNG, or WEBP).");
       return;
     }
     setParsing(true);
+
+    const url = await uploadImageFile(file);
+    if (url) setForm(f => ({ ...f, imageUrl: url }));
+
     try {
       const dataUrl: string = await new Promise((resolve, reject) => {
         const reader = new FileReader();
@@ -162,13 +185,16 @@ export function EventFormDialog({ open, onOpenChange, editingEvent, authHeaders,
         reader.onerror = reject;
         reader.readAsDataURL(file);
       });
-      const base64 = dataUrl.split(",")[1];
       const res = await fetch(apiUrl("/events/parse-flyer"), {
         method: "POST",
         headers: { "Content-Type": "application/json", ...authHeaders().headers },
-        body: JSON.stringify({ image_base64: base64, media_type: file.type }),
+        body: JSON.stringify({ image_base64: dataUrl.split(",")[1], media_type: file.type }),
       });
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      if (!res.ok) {
+        let detail = "";
+        try { detail = (await res.json()).detail ?? ""; } catch { /* non-JSON error */ }
+        throw new Error(detail);
+      }
       const p = await res.json();
       setForm(f => ({
         ...f,
@@ -181,38 +207,37 @@ export function EventFormDialog({ open, onOpenChange, editingEvent, authHeaders,
         setScheduleType("one-off");
         setOneOffDate(p.date);
       }
-      toast.success("Flyer read — review the details, then save.");
-    } catch {
-      toast.error("Couldn't read the flyer. Fill the form manually, or check the AI key is set.");
+      toast.success(url
+        ? "Flyer read and attached as the event image — review, then save."
+        : "Flyer read — review the details, then save.");
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : "";
+      const reason = msg.includes("credit balance")
+        ? "auto-reading is unavailable until Anthropic API credits are added"
+        : "the details couldn't be read automatically";
+      toast.error(url
+        ? `Flyer attached as the event image, but ${reason}. Fill in the details, then save.`
+        : `Couldn't process the flyer: ${reason}.`);
     } finally {
       setParsing(false);
     }
   };
 
-  // Upload an event image to the backend and store its returned URL on the form.
+  // Upload an event image and store its URL on the form.
   const handleImageUpload = async (file: File) => {
     if (!file.type.startsWith("image/")) {
       toast.error("Please choose an image file (JPG, PNG, WEBP, or GIF).");
       return;
     }
     setUploadingImg(true);
-    try {
-      const fd = new FormData();
-      fd.append("file", file);
-      const res = await fetch(apiUrl("/events/upload-image"), {
-        method: "POST",
-        headers: { ...authHeaders().headers }, // no Content-Type — browser sets the multipart boundary
-        body: fd,
-      });
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const { url } = await res.json();
+    const url = await uploadImageFile(file);
+    if (url) {
       setForm(f => ({ ...f, imageUrl: url }));
       toast.success("Image uploaded");
-    } catch {
+    } else {
       toast.error("Couldn't upload the image. Please try again.");
-    } finally {
-      setUploadingImg(false);
     }
+    setUploadingImg(false);
   };
 
   const handleSave = async () => {
@@ -250,7 +275,7 @@ export function EventFormDialog({ open, onOpenChange, editingEvent, authHeaders,
         <div className="rounded-lg border border-dashed border-indigo-500/40 bg-indigo-500/5 p-3 flex items-center justify-between gap-3">
           <div className="min-w-0">
             <p className="text-sm font-medium flex items-center gap-1.5"><Sparkles className="h-3.5 w-3.5 text-indigo-400" /> Auto-fill from a flyer</p>
-            <p className="text-xs text-muted-foreground">Upload an event flyer and we'll read the details for you to review.</p>
+            <p className="text-xs text-muted-foreground">Upload a flyer — it becomes the event image, and we'll read the details for you to review.</p>
           </div>
           <input
             ref={fileInputRef}
