@@ -400,7 +400,7 @@ export function EventFormDialog({ open, onOpenChange, editingEvent, authHeaders,
                   title={c.label}
                   onClick={() => setForm(f => ({ ...f, color: c.value }))}
                   className={`w-7 h-7 rounded-full ${c.value} ring-offset-background transition-all ${
-                    form.color === c.value ? "ring-2 ring-white ring-offset-2 scale-110" : "opacity-70 hover:opacity-100"
+                    form.color === c.value ? "ring-2 ring-foreground ring-offset-2 scale-110" : "opacity-70 hover:opacity-100"
                   }`}
                 />
               ))}

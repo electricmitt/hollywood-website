@@ -138,8 +138,8 @@ export function ChurchCalendar({ events, onEdit, onDelete, onViewDetails }: Prop
       {/* ── Toolbar ── */}
       <div className="flex flex-col sm:flex-row items-center justify-between gap-3 mb-5">
         <div className="flex items-center gap-2">
-          <button onClick={() => shift(-1)} className="p-2 rounded-lg hover:bg-white/10 transition-colors text-foreground" aria-label="Previous"><ChevronLeft size={20} /></button>
-          <button onClick={() => shift(1)} className="p-2 rounded-lg hover:bg-white/10 transition-colors text-foreground" aria-label="Next"><ChevronRight size={20} /></button>
+          <button onClick={() => shift(-1)} className="p-2 rounded-lg hover:bg-accent transition-colors text-foreground" aria-label="Previous"><ChevronLeft size={20} /></button>
+          <button onClick={() => shift(1)} className="p-2 rounded-lg hover:bg-accent transition-colors text-foreground" aria-label="Next"><ChevronRight size={20} /></button>
           <Button variant="outline" size="sm" onClick={goToday} className="text-xs h-8 px-3">Today</Button>
           <h3 className="text-lg sm:text-xl font-bold tracking-tight ml-1">{label()}</h3>
         </div>
@@ -192,7 +192,7 @@ export function ChurchCalendar({ events, onEdit, onDelete, onViewDetails }: Prop
               <button
                 key={day.toISOString()}
                 onClick={() => openDay(day)}
-                className="relative bg-card min-h-[96px] md:min-h-[124px] p-2 text-left hover:bg-white/5 transition-colors focus:outline-none focus:ring-2 focus:ring-inset focus:ring-indigo-500"
+                className="relative bg-card min-h-[96px] md:min-h-[124px] p-2 text-left hover:bg-accent/60 transition-colors focus:outline-none focus:ring-2 focus:ring-inset focus:ring-indigo-500"
               >
                 <span className={cn("inline-flex items-center justify-center w-7 h-7 rounded-full text-sm font-semibold", isToday(day) ? "bg-indigo-500 text-white" : "text-foreground")}>{day.getDate()}</span>
                 <div className="mt-1 flex flex-col gap-0.5 overflow-hidden">
@@ -219,7 +219,7 @@ export function ChurchCalendar({ events, onEdit, onDelete, onViewDetails }: Prop
             <button
               key={day.toISOString()}
               onClick={() => openDay(day)}
-              className="bg-card min-h-[160px] p-2 text-left hover:bg-white/5 transition-colors focus:outline-none focus:ring-2 focus:ring-inset focus:ring-indigo-500"
+              className="bg-card min-h-[160px] p-2 text-left hover:bg-accent/60 transition-colors focus:outline-none focus:ring-2 focus:ring-inset focus:ring-indigo-500"
             >
               <div className="flex items-center gap-1.5 mb-2">
                 <span className="text-xs font-semibold text-muted-foreground uppercase">{DAY_ABBR[day.getDay()]}</span>
@@ -243,7 +243,7 @@ export function ChurchCalendar({ events, onEdit, onDelete, onViewDetails }: Prop
       <div className="bg-card border border-border rounded-xl overflow-hidden">
         {dayEvents.length === 0 ? (
           <div className="flex flex-col items-center justify-center py-20 text-center px-6">
-            <div className="w-12 h-12 rounded-full bg-white/5 flex items-center justify-center mb-3"><span className="text-2xl">📅</span></div>
+            <div className="w-12 h-12 rounded-full bg-muted flex items-center justify-center mb-3"><span className="text-2xl">📅</span></div>
             <p className="font-medium text-sm">No events scheduled</p>
             <p className="text-xs text-muted-foreground mt-1">Nothing on this day</p>
           </div>
@@ -254,11 +254,11 @@ export function ChurchCalendar({ events, onEdit, onDelete, onViewDetails }: Prop
                 <div className={cn("w-1 self-stretch rounded-full flex-shrink-0", eventColors[ev.id])} />
                 <div className="flex-1 min-w-0">
                   <div className="flex items-start justify-between gap-2 mb-2">
-                    <button onClick={() => onViewDetails?.(ev, cursor)} className="font-semibold text-base leading-snug text-left hover:text-indigo-400 transition-colors">{ev.title}</button>
+                    <button onClick={() => onViewDetails?.(ev, cursor)} className="font-semibold text-base leading-snug text-left hover:text-indigo-600 dark:hover:text-indigo-400 transition-colors">{ev.title}</button>
                     <div className="flex items-center gap-1 flex-shrink-0">
-                      <button onClick={() => onViewDetails?.(ev, cursor)} className="p-1 rounded hover:bg-white/10 text-muted-foreground hover:text-foreground transition-colors" title="View details / add to calendar"><CalendarPlus size={15} /></button>
-                      {onEdit && <button onClick={() => onEdit(ev)} className="p-1 rounded hover:bg-white/10 text-muted-foreground hover:text-foreground transition-colors" title="Edit event"><Pencil size={15} /></button>}
-                      {onDelete && <button onClick={() => onDelete(ev.id)} className="p-1 rounded hover:bg-white/10 text-muted-foreground hover:text-destructive transition-colors" title="Delete event"><Trash2 size={15} /></button>}
+                      <button onClick={() => onViewDetails?.(ev, cursor)} className="p-1 rounded hover:bg-accent text-muted-foreground hover:text-foreground transition-colors" title="View details / add to calendar"><CalendarPlus size={15} /></button>
+                      {onEdit && <button onClick={() => onEdit(ev)} className="p-1 rounded hover:bg-accent text-muted-foreground hover:text-foreground transition-colors" title="Edit event"><Pencil size={15} /></button>}
+                      {onDelete && <button onClick={() => onDelete(ev.id)} className="p-1 rounded hover:bg-accent text-muted-foreground hover:text-destructive transition-colors" title="Delete event"><Trash2 size={15} /></button>}
                     </div>
                   </div>
                   <div className="flex flex-wrap gap-x-4 gap-y-1.5 mb-2">
@@ -288,7 +288,7 @@ export function ChurchCalendar({ events, onEdit, onDelete, onViewDetails }: Prop
           for (let d = 1; d <= daysInMonth; d++) cells.push(new Date(y, m, d));
           return (
             <div key={m} className="bg-card border border-border rounded-lg p-3">
-              <button onClick={() => { setCursor(new Date(y, m, 1)); setView("month"); }} className="text-sm font-semibold mb-2 hover:text-indigo-400 transition-colors">{name}</button>
+              <button onClick={() => { setCursor(new Date(y, m, 1)); setView("month"); }} className="text-sm font-semibold mb-2 hover:text-indigo-600 dark:hover:text-indigo-400 transition-colors">{name}</button>
               <div className="grid grid-cols-7 gap-0.5">
                 {DAY_ABBR.map(d => <div key={d} className="text-center text-[9px] text-muted-foreground">{d[0]}</div>)}
                 {cells.map((day, idx) => {
@@ -300,7 +300,7 @@ export function ChurchCalendar({ events, onEdit, onDelete, onViewDetails }: Prop
                       onClick={() => openDay(day)}
                       className={cn(
                         "aspect-square flex items-center justify-center text-[10px] rounded-full transition-colors",
-                        isToday(day) ? "bg-indigo-500 text-white font-bold" : has ? "bg-indigo-500/20 text-indigo-300 font-semibold hover:bg-indigo-500/30" : "text-muted-foreground hover:bg-white/5",
+                        isToday(day) ? "bg-indigo-500 text-white font-bold" : has ? "bg-indigo-500/20 text-indigo-700 dark:text-indigo-300 font-semibold hover:bg-indigo-500/30" : "text-muted-foreground hover:bg-accent/60",
                       )}
                       title={has ? `${eventsOnDay(day).length} event(s)` : undefined}
                     >

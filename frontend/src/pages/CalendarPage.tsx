@@ -151,7 +151,7 @@ export default function CalendarPage() {
 
         {/* Admin mode banner */}
         {isAdmin && (
-          <div className="flex items-center gap-2 text-sm text-amber-500 bg-amber-500/10 border border-amber-500/20 rounded-lg px-4 py-2 mb-6">
+          <div className="flex items-center gap-2 text-sm text-amber-700 dark:text-amber-500 bg-amber-500/10 border border-amber-500/20 rounded-lg px-4 py-2 mb-6">
             <Unlock className="h-4 w-4 flex-shrink-0" />
             <span>Admin mode is active — you can add, edit, and delete events.</span>
           </div>

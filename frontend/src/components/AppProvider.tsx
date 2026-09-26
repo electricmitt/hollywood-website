@@ -1,5 +1,4 @@
 import type { ReactNode } from "react";
-import { ThemeProvider } from "@/internal-components/ThemeProvider";
 
 interface Props {
   children: ReactNode;
@@ -10,11 +9,10 @@ interface Props {
  *
  * You can add multiple providers here by nesting them,
  * and they will all be applied to the app.
+ *
+ * Theme is provided once, in AppWrapper (see constants/default-theme.ts),
+ * so the toggle and the initial page load share a single source of truth.
  */
 export const AppProvider = ({ children }: Props) => {
-  return (
-    <ThemeProvider defaultTheme="dark" storageKey="vite-ui-theme">
-      {children}
-    </ThemeProvider>
-  );
+  return <>{children}</>;
 };
