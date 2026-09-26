@@ -1,14 +1,16 @@
 import os
 import re
 import json
+import secrets
 import httpx
 from datetime import date, datetime, timedelta, timezone
-from fastapi import APIRouter, HTTPException, Depends, Response
+from fastapi import APIRouter, HTTPException, Depends, Response, UploadFile, File
+from fastapi.responses import FileResponse
 from pydantic import BaseModel
 from typing import Optional
 
 from app.apis.admin_auth import require_admin
-from app.libs.storage import json_get, json_put
+from app.libs.storage import json_get, json_put, DATA_DIR
 
 router = APIRouter(prefix="/events")
 
@@ -376,6 +378,44 @@ def calendar_feed() -> Response:
         media_type="text/calendar; charset=utf-8",
         headers={"Content-Disposition": 'inline; filename="hollywood-church.ics"'},
     )
+
+
+# ─── Event image upload (admin) + serving (public) ────────────────────────────
+
+_IMAGE_EXTS = {
+    "image/jpeg": ".jpg",
+    "image/png": ".png",
+    "image/webp": ".webp",
+    "image/gif": ".gif",
+}
+_MAX_IMAGE_BYTES = 10 * 1024 * 1024  # 10 MB
+
+
+@router.post("/upload-image", dependencies=[Depends(require_admin)])
+async def upload_image(file: UploadFile = File(...)) -> dict:
+    """Store an uploaded event image on the data volume and return its URL."""
+    ext = _IMAGE_EXTS.get(file.content_type or "")
+    if not ext:
+        raise HTTPException(status_code=400, detail="Unsupported image type — use JPG, PNG, WEBP, or GIF.")
+    data = await file.read()
+    if len(data) > _MAX_IMAGE_BYTES:
+        raise HTTPException(status_code=400, detail="Image too large (max 10 MB).")
+
+    images_dir = DATA_DIR / "images"
+    images_dir.mkdir(parents=True, exist_ok=True)
+    name = f"{secrets.token_hex(8)}{ext}"
+    (images_dir / name).write_bytes(data)
+    return {"url": f"/api/events/image/{name}"}
+
+
+@router.get("/image/{name}")
+def get_image(name: str) -> FileResponse:
+    """Serve a previously uploaded event image (public)."""
+    safe = os.path.basename(name)  # guard against path traversal
+    path = DATA_DIR / "images" / safe
+    if not path.exists():
+        raise HTTPException(status_code=404, detail="Image not found.")
+    return FileResponse(str(path))
 
 
 # ─── Flyer parsing (admin, AI vision) ─────────────────────────────────────────

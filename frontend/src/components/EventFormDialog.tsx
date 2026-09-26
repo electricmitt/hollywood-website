@@ -8,7 +8,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
 import { Separator } from "@/components/ui/separator";
-import { Sparkles, Loader2 } from "lucide-react";
+import { Sparkles, Loader2, ImagePlus, X } from "lucide-react";
 import { toast } from "sonner";
 import { apiUrl } from "utils/calendarLinks";
 import type { CreateEventRequest } from "../apiclient/data-contracts";
@@ -77,7 +77,9 @@ export function EventFormDialog({ open, onOpenChange, editingEvent, authHeaders,
   const [rangeEnd, setRangeEnd] = useState("");
   const [saving, setSaving] = useState(false);
   const [parsing, setParsing] = useState(false);
+  const [uploadingImg, setUploadingImg] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const imageInputRef = useRef<HTMLInputElement>(null);
 
   // Populate (edit) or reset (add) the form each time the dialog opens.
   useEffect(() => {
@@ -184,6 +186,32 @@ export function EventFormDialog({ open, onOpenChange, editingEvent, authHeaders,
       toast.error("Couldn't read the flyer. Fill the form manually, or check the AI key is set.");
     } finally {
       setParsing(false);
+    }
+  };
+
+  // Upload an event image to the backend and store its returned URL on the form.
+  const handleImageUpload = async (file: File) => {
+    if (!file.type.startsWith("image/")) {
+      toast.error("Please choose an image file (JPG, PNG, WEBP, or GIF).");
+      return;
+    }
+    setUploadingImg(true);
+    try {
+      const fd = new FormData();
+      fd.append("file", file);
+      const res = await fetch(apiUrl("/events/upload-image"), {
+        method: "POST",
+        headers: { ...authHeaders().headers }, // no Content-Type — browser sets the multipart boundary
+        body: fd,
+      });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const { url } = await res.json();
+      setForm(f => ({ ...f, imageUrl: url }));
+      toast.success("Image uploaded");
+    } catch {
+      toast.error("Couldn't upload the image. Please try again.");
+    } finally {
+      setUploadingImg(false);
     }
   };
 
@@ -302,9 +330,38 @@ export function EventFormDialog({ open, onOpenChange, editingEvent, authHeaders,
             <Textarea rows={3} placeholder="Brief description of the event..." value={form.description} onChange={e => setForm(f => ({ ...f, description: e.target.value }))} />
           </div>
 
-          <div className="space-y-1.5">
-            <Label>Image URL <span className="text-muted-foreground text-xs">(optional)</span></Label>
-            <Input placeholder="https://..." value={form.imageUrl ?? ""} onChange={e => setForm(f => ({ ...f, imageUrl: e.target.value }))} />
+          <div className="space-y-2">
+            <Label>Event Image <span className="text-muted-foreground text-xs">(optional)</span></Label>
+
+            {form.imageUrl ? (
+              <div className="relative w-full overflow-hidden rounded-lg border border-border">
+                <img src={form.imageUrl} alt="Event" className="w-full max-h-48 object-cover" />
+                <button
+                  type="button"
+                  onClick={() => setForm(f => ({ ...f, imageUrl: null }))}
+                  className="absolute top-2 right-2 rounded-full bg-black/60 p-1 text-white hover:bg-black/80 transition-colors"
+                  title="Remove image"
+                >
+                  <X size={15} />
+                </button>
+              </div>
+            ) : null}
+
+            <input
+              ref={imageInputRef}
+              type="file"
+              accept="image/*"
+              className="hidden"
+              onChange={e => { const f = e.target.files?.[0]; if (f) handleImageUpload(f); e.target.value = ""; }}
+            />
+            <Button type="button" variant="outline" size="sm" disabled={uploadingImg} onClick={() => imageInputRef.current?.click()}>
+              {uploadingImg ? <><Loader2 className="mr-1.5 h-4 w-4 animate-spin" /> Uploading…</> : <><ImagePlus className="mr-1.5 h-4 w-4" /> {form.imageUrl ? "Replace image" : "Upload image"}</>}
+            </Button>
+
+            <details className="text-xs">
+              <summary className="text-muted-foreground cursor-pointer hover:text-foreground">or paste an image URL</summary>
+              <Input className="mt-1.5" placeholder="https://..." value={form.imageUrl ?? ""} onChange={e => setForm(f => ({ ...f, imageUrl: e.target.value || null }))} />
+            </details>
           </div>
 
           <Separator />
