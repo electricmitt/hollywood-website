@@ -93,27 +93,129 @@ export function nextOccurrence(ev: ScheduleLike): Date {
 
 type HM = { h: number; m: number };
 
-const TIME_RE = /(\d{1,2}):(\d{2})\s*([AaPp][Mm])/g;
+// The church is in West Park, FL — all event times are Eastern.
+// (Mirrors the time handling in backend/app/apis/events_manager.)
+const CHURCH_TZ = "America/New_York";
+const CHURCH_LAT = 25.99;
+const CHURCH_LON = -80.21;
 
-/** Best-effort parse of start/end clock times from the free-text time field. */
-function parseTimes(time: string): { start?: HM; end?: HM } {
-  const matches = [...(time ?? "").matchAll(TIME_RE)];
-  const to24h = (h: number, m: number, ampm: string): HM => {
-    const lower = ampm.toLowerCase();
-    if (lower === "pm" && h !== 12) h += 12;
-    else if (lower === "am" && h === 12) h = 0;
-    return { h: h % 24, m: m % 60 };
+// RFC 5545 definition of US Eastern time (DST: 2nd Sunday of March to 1st Sunday of November).
+const VTIMEZONE = [
+  "BEGIN:VTIMEZONE",
+  `TZID:${CHURCH_TZ}`,
+  "BEGIN:DAYLIGHT",
+  "TZOFFSETFROM:-0500",
+  "TZOFFSETTO:-0400",
+  "TZNAME:EDT",
+  "DTSTART:19700308T020000",
+  "RRULE:FREQ=YEARLY;BYMONTH=3;BYDAY=2SU",
+  "END:DAYLIGHT",
+  "BEGIN:STANDARD",
+  "TZOFFSETFROM:-0400",
+  "TZOFFSETTO:-0500",
+  "TZNAME:EST",
+  "DTSTART:19701101T020000",
+  "RRULE:FREQ=YEARLY;BYMONTH=11;BYDAY=1SU",
+  "END:STANDARD",
+  "END:VTIMEZONE",
+];
+
+// A clock time in the free-text time field: "7:30 PM", "7:30p", "7pm", "10 a.m.", "19:30".
+// The leading group stands in for a lookbehind, which older Safari can't parse.
+const TIME_TOKEN_RE = /(^|[^\d:])(\d{1,2})(?::(\d{2}))?\s*(?:([ap])\.?\s?m?\.?)?(?!\w)/gi;
+const SUNSET_RE = /\b(sunset|sundown)\b/i;
+
+type Meridiem = "a" | "p" | null;
+type TimeToken = { h: number; m: number; ap: Meridiem; inherited: boolean };
+
+/**
+ * Best-effort parse of the free-text time field. Times without am/pm borrow it from
+ * the other end of the range ("7:30 - 9:30pm"); a lone time with no am/pm is too
+ * ambiguous and is ignored. untilSunset is true for e.g. "10:00am - Sunset".
+ */
+export function parseTimes(time: string): { start?: HM; end?: HM; untilSunset: boolean } {
+  const text = (time ?? "").replace(/\bnoon\b/gi, "12:00pm");
+
+  const toks: TimeToken[] = [];
+  for (const match of text.matchAll(TIME_TOKEN_RE)) {
+    const [whole, , hs, ms = "", apRaw = ""] = match;
+    const after = text.slice((match.index ?? 0) + whole.length);
+    // A bare number is only a time when it opens a range ("11 - 1pm"), not "Room 7".
+    if (!ms && !apRaw && !/^\s*(-|–|—|to\b)/.test(after)) continue;
+    const h = Number(hs);
+    const m = Number(ms || 0);
+    const ap = (apRaw.toLowerCase() || null) as Meridiem;
+    if (m > 59 || h > 23 || (ap && (h < 1 || h > 12))) continue;
+    toks.push({ h, m, ap, inherited: false });
+    if (toks.length === 2) break;
+  }
+
+  if (toks.length === 2) {
+    const [a, b] = toks;
+    if (!a.ap && b.ap) Object.assign(a, { ap: b.ap, inherited: true });
+    else if (!b.ap && a.ap) Object.assign(b, { ap: a.ap, inherited: true });
+  }
+
+  const to24h = (t: TimeToken): HM | undefined => {
+    let h = t.h;
+    if (t.ap === "p" && h !== 12) h += 12;
+    else if (t.ap === "a" && h === 12) h = 0;
+    else if (!t.ap && h <= 12) return undefined; // "7:30" alone: morning or evening?
+    return { h, m: t.m };
   };
-  const start = matches[0] ? to24h(+matches[0][1], +matches[0][2], matches[0][3]) : undefined;
-  const end = matches[1] ? to24h(+matches[1][1], +matches[1][2], matches[1][3]) : undefined;
-  return { start, end };
+
+  let start = toks[0] ? to24h(toks[0]) : undefined;
+  let end = toks[1] && start ? to24h(toks[1]) : undefined;
+
+  // A borrowed am/pm that puts the end before the start was the wrong guess:
+  // "11 - 1pm" means 11am-1pm, "11:30am - 1:00" means 11:30am-1pm.
+  const mins = (x: HM) => x.h * 60 + x.m;
+  if (start && end && mins(end) <= mins(start)) {
+    if (toks[0].inherited && toks[0].ap === "p") start = { h: start.h - 12, m: start.m };
+    else if (toks[1].inherited && toks[1].ap === "a" && end.h < 12) end = { h: end.h + 12, m: end.m };
+  }
+
+  const untilSunset = !!start && !end && SUNSET_RE.test(time ?? "");
+  return { start, end, untilSunset };
+}
+
+/** UTC offset in hours for US Eastern time on a calendar date (-4 in DST, else -5). */
+function easternUtcOffset(y: number, month: number, d: number): number {
+  const nthSunday = (mo: number, n: number) => {
+    const firstDow = new Date(Date.UTC(y, mo, 1)).getUTCDay();
+    return Date.UTC(y, mo, 1 + ((7 - firstDow) % 7) + 7 * (n - 1));
+  };
+  const day = Date.UTC(y, month, d);
+  return day >= nthSunday(2, 2) && day < nthSunday(10, 1) ? -4 : -5;
+}
+
+/** Sunset in church-local time on a date — standard sunrise equation. */
+function sunsetLocal(day: Date): HM {
+  const y = day.getFullYear();
+  const mo = day.getMonth();
+  const d = day.getDate();
+  const rad = Math.PI / 180;
+  const n = Math.round((Date.UTC(y, mo, d) - Date.UTC(2000, 0, 1)) / 86400000);
+  const jStar = n - CHURCH_LON / 360;
+  const mAnom = ((357.5291 + 0.98560028 * jStar) % 360) * rad;
+  const center = 1.9148 * Math.sin(mAnom) + 0.02 * Math.sin(2 * mAnom) + 0.0003 * Math.sin(3 * mAnom);
+  const eclLon = ((mAnom / rad + center + 180 + 102.9372) % 360) * rad;
+  const jTransit = 2451545 + jStar + 0.0053 * Math.sin(mAnom) - 0.0069 * Math.sin(2 * eclLon);
+  const decl = Math.asin(Math.sin(eclLon) * Math.sin(23.4397 * rad));
+  const lat = CHURCH_LAT * rad;
+  const cosW0 = (Math.sin(-0.833 * rad) - Math.sin(lat) * Math.sin(decl)) / (Math.cos(lat) * Math.cos(decl));
+  const jSet = jTransit + Math.acos(cosW0) / rad / 360;
+
+  const utcMs = Math.round((jSet - 2440587.5) * 86400) * 1000;
+  const local = new Date(utcMs + easternUtcOffset(y, mo, d) * 3600000);
+  return { h: local.getUTCHours(), m: local.getUTCMinutes() };
 }
 
 const pad = (n: number) => String(n).padStart(2, "0");
 
-/** Returns the start/end instants for an event on a given day. */
+/** Returns the start/end wall-clock times (church-local) for an event on a given day. */
 function resolveRange(ev: CalendarEventInput, day: Date): { start: Date; end: Date; allDay: boolean } {
-  const { start, end } = parseTimes(ev.time);
+  const { start, end, untilSunset } = parseTimes(ev.time);
   if (!start) {
     // No parseable time → treat as an all-day event.
     const s = new Date(day.getFullYear(), day.getMonth(), day.getDate());
@@ -122,9 +224,14 @@ function resolveRange(ev: CalendarEventInput, day: Date): { start: Date; end: Da
     return { start: s, end: e, allDay: true };
   }
   const s = new Date(day.getFullYear(), day.getMonth(), day.getDate(), start.h, start.m);
+  let endHM = end;
+  if (!endHM && untilSunset) {
+    const sunset = sunsetLocal(day);
+    if (sunset.h * 60 + sunset.m > start.h * 60 + start.m) endHM = sunset;
+  }
   let e: Date;
-  if (end) {
-    e = new Date(day.getFullYear(), day.getMonth(), day.getDate(), end.h, end.m);
+  if (endHM) {
+    e = new Date(day.getFullYear(), day.getMonth(), day.getDate(), endHM.h, endHM.m);
     // End earlier than start → assume it rolls into the next day.
     if (e <= s) e.setDate(e.getDate() + 1);
   } else {
@@ -159,6 +266,8 @@ export function googleCalendarUrl(ev: CalendarEventInput, day: Date): string {
     details: ev.description ?? "",
     location: ev.location ?? "",
   });
+  // Times are church-local; without ctz Google would read them in the viewer's zone.
+  if (!allDay) params.set("ctz", CHURCH_TZ);
   return `https://calendar.google.com/calendar/render?${params.toString()}`;
 }
 
@@ -174,15 +283,16 @@ function escapeIcs(text: string): string {
 export function buildEventIcs(ev: CalendarEventInput, day: Date): string {
   const { start, end, allDay } = resolveRange(ev, day);
   const uid = `${fmtDate(start)}-${Math.random().toString(36).slice(2, 8)}@hollywood-church`;
-  const stamp = fmtLocal(new Date());
+  const stamp = new Date().toISOString().replace(/[-:]/g, "").replace(/\.\d{3}/, ""); // UTC, per RFC 5545
   const dtLines = allDay
     ? [`DTSTART;VALUE=DATE:${fmtDate(start)}`, `DTEND;VALUE=DATE:${fmtDate(end)}`]
-    : [`DTSTART:${fmtLocal(start)}`, `DTEND:${fmtLocal(end)}`];
+    : [`DTSTART;TZID=${CHURCH_TZ}:${fmtLocal(start)}`, `DTEND;TZID=${CHURCH_TZ}:${fmtLocal(end)}`];
 
   const lines = [
     "BEGIN:VCALENDAR",
     "VERSION:2.0",
     "PRODID:-//Hollywood Church//Events//EN",
+    ...(allDay ? [] : VTIMEZONE),
     "BEGIN:VEVENT",
     `UID:${uid}`,
     `DTSTAMP:${stamp}`,
