@@ -1,6 +1,7 @@
 import os
 import re
 import json
+import math
 import secrets
 import httpx
 from datetime import date, datetime, timedelta, timezone
@@ -199,8 +200,35 @@ def delete_event(event_id: int) -> DeleteResponse:
 # Maps our dayOfWeek (0=Sun … 6=Sat) to RFC 5545 BYDAY codes.
 _BYDAY = ["SU", "MO", "TU", "WE", "TH", "FR", "SA"]
 
-# Matches a clock time like "11:00 AM" or "7:30 pm" inside the free-text time field.
-_TIME_RE = re.compile(r"(\d{1,2}):(\d{2})\s*([AaPp][Mm])")
+# The church is in West Park, FL — all event times are Eastern.
+CHURCH_TZ = "America/New_York"
+_CHURCH_LAT = 25.99
+_CHURCH_LON = -80.21
+
+# RFC 5545 definition of US Eastern time (DST: 2nd Sunday of March to 1st Sunday of November).
+_VTIMEZONE = [
+    "BEGIN:VTIMEZONE",
+    f"TZID:{CHURCH_TZ}",
+    "BEGIN:DAYLIGHT",
+    "TZOFFSETFROM:-0500",
+    "TZOFFSETTO:-0400",
+    "TZNAME:EDT",
+    "DTSTART:19700308T020000",
+    "RRULE:FREQ=YEARLY;BYMONTH=3;BYDAY=2SU",
+    "END:DAYLIGHT",
+    "BEGIN:STANDARD",
+    "TZOFFSETFROM:-0400",
+    "TZOFFSETTO:-0500",
+    "TZNAME:EST",
+    "DTSTART:19701101T020000",
+    "RRULE:FREQ=YEARLY;BYMONTH=11;BYDAY=1SU",
+    "END:STANDARD",
+    "END:VTIMEZONE",
+]
+
+# A clock time inside the free-text time field: "7:30 PM", "7:30p", "7pm", "10 a.m.", "19:30".
+_TIME_TOKEN_RE = re.compile(r"(?<![\d:])(\d{1,2})(?::(\d{2}))?\s*(?:([ap])\.?\s?m?\.?)?(?!\w)", re.I)
+_SUNSET_RE = re.compile(r"\b(sunset|sundown)\b", re.I)
 
 
 def _our_dow(d: date) -> int:
@@ -226,24 +254,85 @@ def _last_weekday_of_month(year: int, month: int, target_dow: int) -> date:
     return last  # unreachable
 
 
-def _parse_times(time_str: str) -> tuple[Optional[tuple[int, int]], Optional[tuple[int, int]]]:
-    """Best-effort extract (start, end) (hour, minute) from free text.
+def _parse_times(time_str: str) -> tuple[Optional[tuple[int, int]], Optional[tuple[int, int]], bool]:
+    """Best-effort extract (start, end, until_sunset) from the free-text time field.
 
-    Returns (None, None) when no clock time is present (e.g. "Sunset").
+    start/end are (hour, minute) in 24h, or None. Times without am/pm borrow it from
+    the other end of the range ("7:30 - 9:30pm"); a lone time with no am/pm is too
+    ambiguous and is ignored. until_sunset is True for e.g. "10:00am - Sunset".
     """
-    matches = _TIME_RE.findall(time_str or "")
+    text = re.sub(r"\bnoon\b", "12:00pm", time_str or "", flags=re.I)
 
-    def to_24h(h: int, m: int, ampm: str) -> tuple[int, int]:
-        ampm = ampm.lower()
-        if ampm == "pm" and h != 12:
+    toks: list[list] = []  # [hour, minute, meridiem ('a'|'p'|None), inherited]
+    for match in _TIME_TOKEN_RE.finditer(text):
+        h, m, ap = match.group(1), match.group(2) or "", match.group(3) or ""
+        # A bare number is only a time when it opens a range ("11 - 1pm"), not "Room 7".
+        if not m and not ap and not re.match(r"\s*(-|–|—|to\b)", text[match.end():]):
+            continue
+        h, mi = int(h), int(m or 0)
+        if mi > 59 or h > 23 or (ap and not 1 <= h <= 12):
+            continue
+        toks.append([h, mi, ap.lower() or None, False])
+        if len(toks) == 2:
+            break
+
+    if len(toks) == 2:
+        a, b = toks
+        if a[2] is None and b[2]:
+            a[2], a[3] = b[2], True
+        elif b[2] is None and a[2]:
+            b[2], b[3] = a[2], True
+
+    def to_24h(t: list) -> Optional[tuple[int, int]]:
+        h, m, ap, _ = t
+        if ap == "p" and h != 12:
             h += 12
-        elif ampm == "am" and h == 12:
+        elif ap == "a" and h == 12:
             h = 0
-        return (h % 24, m % 60)
+        elif ap is None and h <= 12:
+            return None  # "7:30" alone: morning or evening?
+        return (h, m)
 
-    start = to_24h(int(matches[0][0]), int(matches[0][1]), matches[0][2]) if matches else None
-    end = to_24h(int(matches[1][0]), int(matches[1][1]), matches[1][2]) if len(matches) > 1 else None
-    return start, end
+    start = to_24h(toks[0]) if toks else None
+    end = to_24h(toks[1]) if len(toks) > 1 and start else None
+
+    # A borrowed am/pm that puts the end before the start was the wrong guess:
+    # "11 - 1pm" means 11am-1pm, "11:30am - 1:00" means 11:30am-1pm.
+    if start and end and end <= start:
+        if toks[0][3] and toks[0][2] == "p":
+            start = (start[0] - 12, start[1])
+        elif toks[1][3] and toks[1][2] == "a" and end[0] < 12:
+            end = (end[0] + 12, end[1])
+
+    until_sunset = bool(start and not end and _SUNSET_RE.search(time_str or ""))
+    return start, end, until_sunset
+
+
+def _eastern_utc_offset(d: date) -> int:
+    """UTC offset in hours for US Eastern time on a date (-4 in DST, else -5)."""
+    march_first = date(d.year, 3, 1)
+    dst_start = march_first + timedelta(days=(6 - march_first.weekday()) % 7 + 7)  # 2nd Sunday
+    nov_first = date(d.year, 11, 1)
+    dst_end = nov_first + timedelta(days=(6 - nov_first.weekday()) % 7)  # 1st Sunday
+    return -4 if dst_start <= d < dst_end else -5
+
+
+def _sunset_local(d: date) -> tuple[int, int]:
+    """Sunset (hour, minute) in church-local time on a date — standard sunrise equation."""
+    n = d.toordinal() - date(2000, 1, 1).toordinal()
+    j_star = n - _CHURCH_LON / 360.0
+    m_anom = math.radians((357.5291 + 0.98560028 * j_star) % 360)
+    center = 1.9148 * math.sin(m_anom) + 0.02 * math.sin(2 * m_anom) + 0.0003 * math.sin(3 * m_anom)
+    ecl_lon = math.radians((math.degrees(m_anom) + center + 180 + 102.9372) % 360)
+    j_transit = 2451545.0 + j_star + 0.0053 * math.sin(m_anom) - 0.0069 * math.sin(2 * ecl_lon)
+    decl = math.asin(math.sin(ecl_lon) * math.sin(math.radians(23.4397)))
+    lat = math.radians(_CHURCH_LAT)
+    cos_w0 = (math.sin(math.radians(-0.833)) - math.sin(lat) * math.sin(decl)) / (math.cos(lat) * math.cos(decl))
+    j_set = j_transit + math.degrees(math.acos(cos_w0)) / 360.0
+
+    utc = datetime(1970, 1, 1) + timedelta(seconds=round((j_set - 2440587.5) * 86400))
+    local = utc + timedelta(hours=_eastern_utc_offset(d))
+    return (local.hour, local.minute)
 
 
 def _escape(text: str) -> str:
@@ -277,24 +366,27 @@ def _fold(line: str) -> str:
 
 def _vevent_lines(ev: dict, dtstamp: str) -> list[str]:
     """Build the VEVENT body lines for one stored event, or [] if unschedulable."""
-    start_t, end_t = _parse_times(ev.get("time", ""))
+    start_t, end_t, until_sunset = _parse_times(ev.get("time", ""))
     uid = f"hollywood-event-{ev['id']}@church"
 
-    def timed(d: date) -> tuple[str, str]:
+    def timed(d: date, sunset_ref: Optional[date] = None) -> tuple[str, str]:
         sh, sm = start_t
         dtstart = f"{d:%Y%m%d}T{sh:02d}{sm:02d}00"
-        if end_t:
-            eh, em = end_t
-            end_date = d
+        end = end_t
+        if not end and until_sunset:
+            sunset = _sunset_local(sunset_ref or d)
+            if sunset > (sh, sm):
+                end = sunset
+        if end:
+            eh, em = end
             # If the end clock time is earlier than start, assume it rolls to next day.
-            if (eh, em) <= (sh, sm):
-                end_date = d + timedelta(days=1)
+            end_date = d + timedelta(days=1) if (eh, em) <= (sh, sm) else d
             dtend = f"{end_date:%Y%m%d}T{eh:02d}{em:02d}00"
         else:
             # Default 1-hour duration when only a start time is known.
             end_dt = datetime(d.year, d.month, d.day, sh, sm) + timedelta(hours=1)
             dtend = f"{end_dt:%Y%m%dT%H%M%S}"
-        return f"DTSTART:{dtstart}", f"DTEND:{dtend}"
+        return f"DTSTART;TZID={CHURCH_TZ}:{dtstart}", f"DTEND;TZID={CHURCH_TZ}:{dtend}"
 
     def all_day(d: date, days: int = 1) -> tuple[str, str]:
         return (
@@ -327,7 +419,9 @@ def _vevent_lines(ev: dict, dtstamp: str) -> list[str]:
             rrule = f"RRULE:FREQ=MONTHLY;BYDAY=-1{_BYDAY[dow]}"
         else:
             return []
-        dt_lines = list(timed(anchor) if start_t else all_day(anchor))
+        # One RRULE shares a single end time, so a recurring "until sunset" uses
+        # today's sunset; subscribers re-fetch the feed, so it tracks the season.
+        dt_lines = list(timed(anchor, sunset_ref=date.today()) if start_t else all_day(anchor))
     else:
         return []
 
@@ -362,7 +456,8 @@ def calendar_feed() -> Response:
         "CALSCALE:GREGORIAN",
         "METHOD:PUBLISH",
         "X-WR-CALNAME:Hollywood Church Events",
-        "X-WR-TIMEZONE:America/Los_Angeles",
+        f"X-WR-TIMEZONE:{CHURCH_TZ}",
+        *_VTIMEZONE,
     ]
     for ev in raw:
         try:
