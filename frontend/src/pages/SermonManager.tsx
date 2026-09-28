@@ -1,7 +1,8 @@
 import React, { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import { apiClient } from "app";
-import { GetSermonsSermons, SermonOverride } from "types";
+import { SermonOverride } from "types";
+import type { Sermon } from "utils/sermon";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -20,11 +21,11 @@ import { useAdminSession } from "utils/useAdminSession";
 const SermonManager: React.FC = () => {
   const navigate = useNavigate();
   const { adminToken, authChecked, authHeaders } = useAdminSession();
-  const [sermons, setSermons] = useState<GetSermonsSermons[]>([]);
+  const [sermons, setSermons] = useState<Sermon[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [isModalOpen, setIsModalOpen] = useState(false);
-  const [selectedSermon, setSelectedSermon] = useState<GetSermonsSermons | null>(null);
+  const [selectedSermon, setSelectedSermon] = useState<Sermon | null>(null);
   const [formData, setFormData] = useState<SermonOverride>({});
 
   const fetchSermons = async () => {
@@ -44,7 +45,7 @@ const SermonManager: React.FC = () => {
     fetchSermons();
   }, []);
 
-  const handleEditClick = (sermon: GetSermonsSermons) => {
+  const handleEditClick = (sermon: Sermon) => {
     setSelectedSermon(sermon);
     setFormData({
       title: sermon.title,

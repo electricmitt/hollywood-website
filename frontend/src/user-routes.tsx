@@ -19,6 +19,7 @@ import OutreachMissionsMinistry from "./pages/OutreachMissionsMinistry.tsx";
 import PrayerMinistryPage from "./pages/PrayerMinistryPage.tsx";
 import SermonManager from "./pages/SermonManager.tsx";
 import Sermons from "./pages/Sermons.tsx";
+import Visit from "./pages/Visit.tsx";
 import WordOfGodMinistry from "./pages/WordOfGodMinistry.tsx";
 
 export const userRoutes: RouteObject[] = [
@@ -47,6 +48,7 @@ export const userRoutes: RouteObject[] = [
 	{ path: "/sermon-manager", element: <SermonManager /> },
 	{ path: "/sermonmanager", element: <SermonManager /> },
 	{ path: "/sermons", element: <Sermons /> },
+	{ path: "/visit", element: <Visit /> },
 	{ path: "/word-of-god-ministry", element: <WordOfGodMinistry /> },
 	{ path: "/wordofgodministry", element: <WordOfGodMinistry /> },
 
