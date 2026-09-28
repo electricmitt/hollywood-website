@@ -7,7 +7,7 @@ import { Pencil, Trash2, Plus, Calendar, MapPin, Clock, AlertCircle, Lock } from
 import { useNavigate } from "react-router-dom";
 import { toast } from "sonner";
 import { useAdminSession } from "utils/useAdminSession";
-import { formatSchedule } from "utils/calendarLinks";
+import { describeSchedule, timeLabel } from "utils/eventSchedule";
 import { EventFormDialog } from "components/EventFormDialog";
 import type { ChurchEvent } from "../apiclient/data-contracts";
 
@@ -118,8 +118,8 @@ export default function EventManager() {
                     {event.featured && <Badge variant="secondary" className="text-xs">Featured</Badge>}
                   </div>
                   <div className="flex flex-wrap gap-x-4 gap-y-1 text-sm text-muted-foreground">
-                    <span className="flex items-center gap-1"><Calendar size={13} />{formatSchedule(event) || "—"}</span>
-                    <span className="flex items-center gap-1"><Clock size={13} />{event.time}</span>
+                    <span className="flex items-center gap-1"><Calendar size={13} />{describeSchedule(event) || "—"}</span>
+                    <span className="flex items-center gap-1"><Clock size={13} />{timeLabel(event)}</span>
                     <span className="flex items-center gap-1"><MapPin size={13} />{event.location}</span>
                   </div>
                 </div>

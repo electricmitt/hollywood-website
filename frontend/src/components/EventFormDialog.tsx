@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { apiClient } from "app";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -8,10 +8,26 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
 import { Separator } from "@/components/ui/separator";
-import { Sparkles, Loader2, ImagePlus, X } from "lucide-react";
+import { Sparkles, Loader2, ImagePlus, X, CalendarClock } from "lucide-react";
 import { toast } from "sonner";
 import { apiUrl } from "utils/calendarLinks";
-import type { CreateEventRequest } from "../apiclient/data-contracts";
+import {
+  DAY_NAMES,
+  WEEK_OF_MONTH_LABELS,
+  describeSchedule,
+  eventClock,
+  hmToString,
+  nextOccurrence,
+  normalizeRecurrence,
+  occursOn,
+  parseLocalDate,
+  parseTimes,
+  timeLabel,
+  toIsoDate,
+  type Freq,
+  type SchedulableEvent,
+} from "utils/eventSchedule";
+import type { ChurchEvent, CreateEventRequest } from "../apiclient/data-contracts";
 
 const COLOR_OPTIONS = [
   { label: "Indigo", value: "bg-indigo-500" },
@@ -24,43 +40,92 @@ const COLOR_OPTIONS = [
   { label: "Teal", value: "bg-teal-500" },
 ];
 
-const DAY_NAMES_FULL = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
+type ScheduleKind = "once" | "range" | "repeat";
+type EndMode = "none" | "time" | "sunset";
 
-type ScheduleType = "weekly" | "monthly-last" | "one-off" | "date-range";
-
-/** Loose shape both the calendar's ChurchEvent and the API contract satisfy. */
-export interface EditableEvent {
-  id: number;
+interface Details {
   title: string;
-  time: string;
   location: string;
   description: string;
-  color?: string | null;
-  featured?: boolean | null;
-  imageUrl?: string | null;
-  date?: string | null;
-  dateRange?: { start: string; end: string } | null;
-  recurrence?: { type: string; dayOfWeek?: number | null } | null;
+  color: string;
+  featured: boolean;
+  imageUrl: string | null;
 }
 
-const emptyForm = (): CreateEventRequest => ({
+interface RepeatState {
+  freq: Freq;
+  interval: number;
+  dayOfWeek: number;
+  weekOfMonth: number;
+  startDate: string;
+  endDate: string;
+  exceptions: string[];
+}
+
+const INTERVAL_OPTIONS: Record<Freq, { value: number; label: string }[]> = {
+  weekly: [
+    { value: 1, label: "Every week" },
+    { value: 2, label: "Every other week" },
+    { value: 3, label: "Every 3 weeks" },
+    { value: 4, label: "Every 4 weeks" },
+  ],
+  monthly: [
+    { value: 1, label: "every month" },
+    { value: 2, label: "every other month" },
+    { value: 3, label: "every 3 months" },
+    { value: 6, label: "every 6 months" },
+  ],
+  yearly: [
+    { value: 1, label: "Every year" },
+    { value: 2, label: "Every other year" },
+  ],
+};
+
+const emptyDetails = (): Details => ({
   title: "",
-  time: "",
   location: "",
   description: "",
   color: "bg-indigo-500",
   featured: false,
   imageUrl: null,
-  date: null,
-  dateRange: null,
-  recurrence: null,
 });
+
+/** Which week of its month a date falls in (1-4, or -1 for a 5th week). */
+const weekOfMonthFor = (d: Date) => {
+  const n = Math.ceil(d.getDate() / 7);
+  return n >= 5 ? -1 : n;
+};
+
+const defaultRepeat = (day: Date): RepeatState => ({
+  freq: "weekly",
+  interval: 1,
+  dayOfWeek: day.getDay(),
+  weekOfMonth: weekOfMonthFor(day),
+  startDate: toIsoDate(day),
+  endDate: "",
+  exceptions: [],
+});
+
+const shortDate = (iso: string) =>
+  parseLocalDate(iso).toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric", year: "numeric" });
+
+/** Readable message from a failed API call (FastAPI 4xx body), if there is one. */
+function apiErrorMessage(err: unknown): string | null {
+  const e = err as { status?: number; error?: { detail?: unknown } } | undefined;
+  if (e?.status === 401) return "Your admin session has expired — please log in again.";
+  const detail = e?.error?.detail;
+  if (typeof detail === "string") return detail;
+  if (Array.isArray(detail) && detail[0]?.msg) return String(detail[0].msg).replace(/^Value error, /, "");
+  return null;
+}
 
 interface Props {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   /** Event being edited, or null to add a new one. */
-  editingEvent: EditableEvent | null;
+  editingEvent: ChurchEvent | null;
+  /** New events: start on this day (e.g. the day selected on the calendar). */
+  initialDate?: Date | null;
   /** Returns RequestParams carrying the admin token header. */
   authHeaders: () => { headers: { "X-Admin-Token": string } };
   /** Called after a successful create/update so the caller can reload. */
@@ -68,84 +133,163 @@ interface Props {
 }
 
 /** Shared admin dialog for creating and editing church events. */
-export function EventFormDialog({ open, onOpenChange, editingEvent, authHeaders, onSaved }: Props) {
-  const [form, setForm] = useState<CreateEventRequest>(emptyForm());
-  const [scheduleType, setScheduleType] = useState<ScheduleType>("weekly");
-  const [recurDay, setRecurDay] = useState<number>(6);
+export function EventFormDialog({ open, onOpenChange, editingEvent, initialDate, authHeaders, onSaved }: Props) {
+  const [details, setDetails] = useState<Details>(emptyDetails());
+
+  // When
+  const [kind, setKind] = useState<ScheduleKind>("once");
   const [oneOffDate, setOneOffDate] = useState("");
   const [rangeStart, setRangeStart] = useState("");
   const [rangeEnd, setRangeEnd] = useState("");
+  const [repeat, setRepeat] = useState<RepeatState>(defaultRepeat(new Date()));
+  const [skipInput, setSkipInput] = useState("");
+
+  // Time
+  const [allDay, setAllDay] = useState(false);
+  const [startTime, setStartTime] = useState(""); // "HH:MM"
+  const [endMode, setEndMode] = useState<EndMode>("none");
+  const [endTime, setEndTime] = useState("");
+  const [legacyTime, setLegacyTime] = useState<string | null>(null);
+
   const [saving, setSaving] = useState(false);
   const [parsing, setParsing] = useState(false);
   const [uploadingImg, setUploadingImg] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const imageInputRef = useRef<HTMLInputElement>(null);
 
+  const updateRepeat = (patch: Partial<RepeatState>) => setRepeat(r => ({ ...r, ...patch }));
+
   // Populate (edit) or reset (add) the form each time the dialog opens.
   useEffect(() => {
     if (!open) return;
-    if (editingEvent) {
-      setForm({
-        title: editingEvent.title,
-        time: editingEvent.time,
-        location: editingEvent.location,
-        description: editingEvent.description,
-        color: editingEvent.color ?? "bg-indigo-500",
-        featured: editingEvent.featured ?? false,
-        imageUrl: editingEvent.imageUrl ?? null,
-        date: editingEvent.date ?? null,
-        dateRange: editingEvent.dateRange ?? null,
-        recurrence: editingEvent.recurrence
-          ? { type: editingEvent.recurrence.type, dayOfWeek: editingEvent.recurrence.dayOfWeek ?? undefined }
-          : null,
-      });
-      if (editingEvent.recurrence?.type === "weekly") {
-        setScheduleType("weekly");
-        setRecurDay(editingEvent.recurrence.dayOfWeek ?? 6);
-      } else if (editingEvent.recurrence?.type === "monthly-last") {
-        setScheduleType("monthly-last");
-        setRecurDay(editingEvent.recurrence.dayOfWeek ?? 6);
-      } else if (editingEvent.dateRange) {
-        setScheduleType("date-range");
-        setRangeStart(editingEvent.dateRange.start);
-        setRangeEnd(editingEvent.dateRange.end);
-      } else {
-        setScheduleType("one-off");
-        setOneOffDate(editingEvent.date ?? "");
-      }
-    } else {
-      setForm(emptyForm());
-      setScheduleType("weekly");
-      setRecurDay(6);
-      setOneOffDate("");
+    const ev = editingEvent;
+    const base = initialDate ?? new Date();
+    setSkipInput("");
+
+    if (!ev) {
+      setDetails(emptyDetails());
+      setKind("once");
+      setOneOffDate(initialDate ? toIsoDate(initialDate) : "");
       setRangeStart("");
       setRangeEnd("");
+      setRepeat(defaultRepeat(base));
+      setAllDay(false);
+      setStartTime("");
+      setEndMode("none");
+      setEndTime("");
+      setLegacyTime(null);
+      return;
     }
-  }, [open, editingEvent]);
 
-  const buildPayload = (): CreateEventRequest => {
-    const base: CreateEventRequest = {
-      title: form.title,
-      time: form.time,
-      location: form.location,
-      description: form.description,
-      color: form.color,
-      featured: form.featured,
-      imageUrl: form.imageUrl || null,
-      date: null,
-      dateRange: null,
-      recurrence: null,
-    };
-    if (scheduleType === "weekly") {
-      base.recurrence = { type: "weekly", dayOfWeek: recurDay };
-    } else if (scheduleType === "monthly-last") {
-      base.recurrence = { type: "monthly-last", dayOfWeek: recurDay };
-    } else if (scheduleType === "one-off") {
-      base.date = oneOffDate;
-    } else if (scheduleType === "date-range") {
-      base.dateRange = { start: rangeStart, end: rangeEnd };
+    setDetails({
+      title: ev.title,
+      location: ev.location,
+      description: ev.description ?? "",
+      color: ev.color ?? "bg-indigo-500",
+      featured: ev.featured ?? false,
+      imageUrl: ev.imageUrl ?? null,
+    });
+    setOneOffDate(ev.date ?? "");
+    setRangeStart(ev.dateRange?.start ?? "");
+    setRangeEnd(ev.dateRange?.end ?? "");
+    if (ev.recurrence) {
+      const r = normalizeRecurrence(ev.recurrence);
+      const d = defaultRepeat(base);
+      setRepeat({
+        freq: r.freq ?? "weekly",
+        interval: r.interval,
+        dayOfWeek: r.dayOfWeek ?? d.dayOfWeek,
+        weekOfMonth: r.weekOfMonth,
+        startDate: r.startDate ?? "",
+        endDate: r.endDate ?? "",
+        exceptions: r.exceptions,
+      });
+      setKind("repeat");
+    } else {
+      setRepeat(defaultRepeat(base));
+      setKind(ev.dateRange ? "range" : "once");
     }
-    return base;
+
+    if (ev.allDay) {
+      setAllDay(true);
+      setStartTime("");
+      setEndMode("none");
+      setEndTime("");
+      setLegacyTime(null);
+    } else {
+      const clock = eventClock(ev);
+      setAllDay(false);
+      setStartTime(clock.start ? hmToString(clock.start) : "");
+      setEndMode(clock.end ? "time" : clock.untilSunset ? "sunset" : "none");
+      setEndTime(clock.end ? hmToString(clock.end) : "");
+      setLegacyTime(!clock.start && ev.time ? ev.time : null);
+    }
+  }, [open, editingEvent, initialDate]);
+
+  // The event as currently filled in (schedule + time), for preview and saving.
+  const draft: SchedulableEvent = {
+    date: kind === "once" ? oneOffDate || null : null,
+    dateRange: kind === "range" && rangeStart && rangeEnd ? { start: rangeStart, end: rangeEnd } : null,
+    recurrence:
+      kind === "repeat"
+        ? {
+            freq: repeat.freq,
+            interval: repeat.interval,
+            dayOfWeek: repeat.freq === "yearly" ? null : repeat.dayOfWeek,
+            weekOfMonth: repeat.freq === "monthly" ? repeat.weekOfMonth : null,
+            startDate: repeat.startDate || null,
+            endDate: repeat.endDate || null,
+            exceptions: repeat.exceptions,
+          }
+        : null,
+    allDay,
+    startTime: allDay ? null : startTime || null,
+    endTime: !allDay && endMode === "time" ? endTime || null : null,
+    endsAtSunset: !allDay && endMode === "sunset",
+  };
+
+  // Next few dates of a repeat, so the admin can check it's right before saving.
+  const draftKey = JSON.stringify(draft.recurrence);
+  const upcomingDates = useMemo(() => {
+    if (kind !== "repeat") return [];
+    const out: Date[] = [];
+    let from = new Date();
+    for (let i = 0; i < 4; i++) {
+      const d = nextOccurrence(draft, from);
+      if (!d) break;
+      out.push(d);
+      from = new Date(d.getFullYear(), d.getMonth(), d.getDate() + 1);
+    }
+    return out;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [kind, draftKey]);
+
+  const addSkippedDate = () => {
+    if (!skipInput) return;
+    const withoutSkips = { ...draft, recurrence: { ...draft.recurrence, exceptions: [] } };
+    if (!occursOn(withoutSkips, parseLocalDate(skipInput))) {
+      toast.error(`${shortDate(skipInput)} isn't one of this event's dates.`);
+      return;
+    }
+    updateRepeat({ exceptions: [...new Set([...repeat.exceptions, skipInput])].sort() });
+    setSkipInput("");
+  };
+
+  const validate = (): string | null => {
+    if (!details.title.trim()) return "Add a title.";
+    if (!details.location.trim()) return "Add a location.";
+    if (kind === "once" && !oneOffDate) return "Pick the event date.";
+    if (kind === "range") {
+      if (!rangeStart || !rangeEnd) return "Pick the first and last day.";
+      if (rangeEnd < rangeStart) return "The last day is before the first day.";
+    }
+    if (kind === "repeat") {
+      if ((repeat.freq === "yearly" || repeat.interval > 1) && !repeat.startDate) return "This repeat needs a start date.";
+      if (repeat.startDate && repeat.endDate && repeat.endDate < repeat.startDate) return "The repeat ends before it starts.";
+    }
+    if (!allDay && !startTime) return "Set a start time, or mark the event as all day.";
+    if (!allDay && endMode === "time" && !endTime) return "Set the end time.";
+    return null;
   };
 
   // Upload an image file to the backend; returns its hosted URL, or null on failure.
@@ -176,7 +320,7 @@ export function EventFormDialog({ open, onOpenChange, editingEvent, authHeaders,
     setParsing(true);
 
     const url = await uploadImageFile(file);
-    if (url) setForm(f => ({ ...f, imageUrl: url }));
+    if (url) setDetails(d => ({ ...d, imageUrl: url }));
 
     try {
       const dataUrl: string = await new Promise((resolve, reject) => {
@@ -196,16 +340,25 @@ export function EventFormDialog({ open, onOpenChange, editingEvent, authHeaders,
         throw new Error(detail);
       }
       const p = await res.json();
-      setForm(f => ({
-        ...f,
-        title: p.title || f.title,
-        time: p.time || f.time,
-        location: p.location || f.location,
-        description: p.description || f.description,
+      setDetails(d => ({
+        ...d,
+        title: p.title || d.title,
+        location: p.location || d.location,
+        description: p.description || d.description,
       }));
       if (p.date) {
-        setScheduleType("one-off");
+        setKind("once");
         setOneOffDate(p.date);
+      }
+      if (p.time) {
+        const clock = parseTimes(p.time);
+        if (clock.start) {
+          setAllDay(false);
+          setStartTime(hmToString(clock.start));
+          setEndMode(clock.end ? "time" : clock.untilSunset ? "sunset" : "none");
+          setEndTime(clock.end ? hmToString(clock.end) : "");
+          setLegacyTime(null);
+        }
       }
       toast.success(url
         ? "Flyer read and attached as the event image — review, then save."
@@ -232,7 +385,7 @@ export function EventFormDialog({ open, onOpenChange, editingEvent, authHeaders,
     setUploadingImg(true);
     const url = await uploadImageFile(file);
     if (url) {
-      setForm(f => ({ ...f, imageUrl: url }));
+      setDetails(d => ({ ...d, imageUrl: url }));
       toast.success("Image uploaded");
     } else {
       toast.error("Couldn't upload the image. Please try again.");
@@ -241,13 +394,29 @@ export function EventFormDialog({ open, onOpenChange, editingEvent, authHeaders,
   };
 
   const handleSave = async () => {
-    if (!form.title.trim() || !form.time.trim() || !form.location.trim()) {
-      toast.error("Title, time, and location are required");
+    const problem = validate();
+    if (problem) {
+      toast.error(problem);
       return;
     }
+    const payload: CreateEventRequest = {
+      title: details.title.trim(),
+      location: details.location.trim(),
+      description: details.description,
+      color: details.color,
+      featured: details.featured,
+      imageUrl: details.imageUrl || null,
+      date: draft.date ?? null,
+      dateRange: draft.dateRange ?? null,
+      recurrence: draft.recurrence ?? null,
+      allDay: !!draft.allDay,
+      startTime: draft.startTime ?? null,
+      endTime: draft.endTime ?? null,
+      endsAtSunset: !!draft.endsAtSunset,
+      time: timeLabel(draft), // stored display label
+    };
     setSaving(true);
     try {
-      const payload = buildPayload();
       if (editingEvent) {
         await apiClient.update_event({ eventId: editingEvent.id }, payload, authHeaders());
         toast.success("Event updated");
@@ -257,12 +426,30 @@ export function EventFormDialog({ open, onOpenChange, editingEvent, authHeaders,
       }
       onOpenChange(false);
       await onSaved();
-    } catch {
-      toast.error("Failed to save event. Your admin session may have expired — try logging in again.");
+    } catch (err) {
+      toast.error(apiErrorMessage(err) ?? "Failed to save event. Your admin session may have expired — try logging in again.");
     } finally {
       setSaving(false);
     }
   };
+
+  const dayOfWeekSelect = (
+    <Select value={String(repeat.dayOfWeek)} onValueChange={v => updateRepeat({ dayOfWeek: Number(v) })}>
+      <SelectTrigger className="w-[140px]" aria-label="Day of the week"><SelectValue /></SelectTrigger>
+      <SelectContent>
+        {DAY_NAMES.map((d, i) => <SelectItem key={i} value={String(i)}>{d}</SelectItem>)}
+      </SelectContent>
+    </Select>
+  );
+
+  const intervalSelect = (
+    <Select value={String(repeat.interval)} onValueChange={v => updateRepeat({ interval: Number(v) })}>
+      <SelectTrigger className="w-[170px]" aria-label="How often"><SelectValue /></SelectTrigger>
+      <SelectContent>
+        {INTERVAL_OPTIONS[repeat.freq].map(o => <SelectItem key={o.value} value={String(o.value)}>{o.label}</SelectItem>)}
+      </SelectContent>
+    </Select>
+  );
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -292,78 +479,196 @@ export function EventFormDialog({ open, onOpenChange, editingEvent, authHeaders,
         <div className="space-y-5 py-2">
           <div className="space-y-1.5">
             <Label>Title *</Label>
-            <Input placeholder="e.g. Sabbath Worship" value={form.title} onChange={e => setForm(f => ({ ...f, title: e.target.value }))} />
+            <Input placeholder="e.g. Sabbath Worship" value={details.title} onChange={e => setDetails(d => ({ ...d, title: e.target.value }))} />
           </div>
 
-          <div className="space-y-1.5">
-            <Label>Schedule Type *</Label>
-            <Select value={scheduleType} onValueChange={v => setScheduleType(v as ScheduleType)}>
-              <SelectTrigger><SelectValue /></SelectTrigger>
+          {/* ── When ── */}
+          <div className="space-y-3">
+            <Label>When *</Label>
+            <Select value={kind} onValueChange={v => setKind(v as ScheduleKind)}>
+              <SelectTrigger aria-label="Schedule type"><SelectValue /></SelectTrigger>
               <SelectContent>
-                <SelectItem value="weekly">Weekly (repeats every week)</SelectItem>
-                <SelectItem value="monthly-last">Last [Day] of Each Month</SelectItem>
-                <SelectItem value="one-off">Single Date</SelectItem>
-                <SelectItem value="date-range">Date Range (multi-day)</SelectItem>
+                <SelectItem value="once">One day</SelectItem>
+                <SelectItem value="range">Several days in a row</SelectItem>
+                <SelectItem value="repeat">Repeats</SelectItem>
               </SelectContent>
             </Select>
-          </div>
 
-          {(scheduleType === "weekly" || scheduleType === "monthly-last") && (
-            <div className="space-y-1.5">
-              <Label>Day of Week *</Label>
-              <Select value={String(recurDay)} onValueChange={v => setRecurDay(Number(v))}>
-                <SelectTrigger><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  {DAY_NAMES_FULL.map((d, i) => <SelectItem key={i} value={String(i)}>{d}</SelectItem>)}
-                </SelectContent>
-              </Select>
-            </div>
-          )}
-          {scheduleType === "one-off" && (
-            <div className="space-y-1.5">
-              <Label>Date *</Label>
-              <Input type="date" value={oneOffDate} onChange={e => setOneOffDate(e.target.value)} />
-            </div>
-          )}
-          {scheduleType === "date-range" && (
-            <div className="grid grid-cols-2 gap-3">
-              <div className="space-y-1.5">
-                <Label>Start Date *</Label>
-                <Input type="date" value={rangeStart} onChange={e => setRangeStart(e.target.value)} />
+            {kind === "once" && (
+              <Input type="date" aria-label="Date" value={oneOffDate} onChange={e => setOneOffDate(e.target.value)} />
+            )}
+
+            {kind === "range" && (
+              <div className="grid grid-cols-2 gap-3">
+                <div className="space-y-1">
+                  <Label className="text-xs text-muted-foreground">First day</Label>
+                  <Input type="date" value={rangeStart} onChange={e => setRangeStart(e.target.value)} />
+                </div>
+                <div className="space-y-1">
+                  <Label className="text-xs text-muted-foreground">Last day</Label>
+                  <Input type="date" value={rangeEnd} onChange={e => setRangeEnd(e.target.value)} />
+                </div>
               </div>
-              <div className="space-y-1.5">
-                <Label>End Date *</Label>
-                <Input type="date" value={rangeEnd} onChange={e => setRangeEnd(e.target.value)} />
+            )}
+
+            {kind === "repeat" && (
+              <div className="space-y-3 rounded-lg border border-border p-3">
+                <Select
+                  value={repeat.freq}
+                  onValueChange={v => updateRepeat({ freq: v as Freq, interval: 1 })}
+                >
+                  <SelectTrigger aria-label="Repeat frequency"><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="weekly">Weekly</SelectItem>
+                    <SelectItem value="monthly">Monthly (on a weekday)</SelectItem>
+                    <SelectItem value="yearly">Yearly</SelectItem>
+                  </SelectContent>
+                </Select>
+
+                {repeat.freq === "weekly" && (
+                  <div className="flex flex-wrap items-center gap-2 text-sm">
+                    {intervalSelect}
+                    <span>on</span>
+                    {dayOfWeekSelect}
+                  </div>
+                )}
+
+                {repeat.freq === "monthly" && (
+                  <div className="flex flex-wrap items-center gap-2 text-sm">
+                    <span>The</span>
+                    <Select value={String(repeat.weekOfMonth)} onValueChange={v => updateRepeat({ weekOfMonth: Number(v) })}>
+                      <SelectTrigger className="w-[110px]" aria-label="Week of the month"><SelectValue /></SelectTrigger>
+                      <SelectContent>
+                        {[1, 2, 3, 4, -1].map(n => <SelectItem key={n} value={String(n)}>{WEEK_OF_MONTH_LABELS[n]}</SelectItem>)}
+                      </SelectContent>
+                    </Select>
+                    {dayOfWeekSelect}
+                    <span>of</span>
+                    {intervalSelect}
+                  </div>
+                )}
+
+                {repeat.freq === "yearly" && (
+                  <div className="flex flex-wrap items-center gap-2 text-sm">
+                    {intervalSelect}
+                    <span className="text-muted-foreground">on the start date's month and day</span>
+                  </div>
+                )}
+
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="space-y-1">
+                    <Label className="text-xs text-muted-foreground">
+                      Starts on{repeat.freq === "yearly" || repeat.interval > 1 ? " *" : ""}
+                    </Label>
+                    <Input type="date" value={repeat.startDate} onChange={e => updateRepeat({ startDate: e.target.value })} />
+                  </div>
+                  <div className="space-y-1">
+                    <Label className="text-xs text-muted-foreground">Ends on (optional)</Label>
+                    <Input type="date" value={repeat.endDate} onChange={e => updateRepeat({ endDate: e.target.value })} />
+                  </div>
+                </div>
+
+                {/* Skipped dates */}
+                <div className="space-y-1.5">
+                  <Label className="text-xs text-muted-foreground">Skipped dates (optional)</Label>
+                  {repeat.exceptions.length > 0 && (
+                    <div className="flex flex-wrap gap-1.5">
+                      {repeat.exceptions.map(d => (
+                        <span key={d} className="inline-flex items-center gap-1 rounded-full bg-muted px-2.5 py-1 text-xs">
+                          {shortDate(d)}
+                          <button
+                            type="button"
+                            onClick={() => updateRepeat({ exceptions: repeat.exceptions.filter(x => x !== d) })}
+                            className="text-muted-foreground hover:text-foreground"
+                            aria-label={`Restore ${shortDate(d)}`}
+                            title="Restore this date"
+                          >
+                            <X size={12} />
+                          </button>
+                        </span>
+                      ))}
+                    </div>
+                  )}
+                  <div className="flex gap-2">
+                    <Input type="date" aria-label="Date to skip" value={skipInput} onChange={e => setSkipInput(e.target.value)} />
+                    <Button type="button" variant="outline" size="sm" className="h-10 flex-shrink-0" disabled={!skipInput} onClick={addSkippedDate}>
+                      Skip date
+                    </Button>
+                  </div>
+                </div>
+
+                {/* Preview */}
+                <div className="rounded-md bg-muted/60 px-3 py-2 text-xs">
+                  <p className="font-medium flex items-center gap-1.5"><CalendarClock className="h-3.5 w-3.5" /> {describeSchedule(draft) || "Choose when it repeats"}</p>
+                  <p className="text-muted-foreground mt-0.5">
+                    {upcomingDates.length
+                      ? `Next: ${upcomingDates.map(d => d.toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" })).join(" · ")}`
+                      : "No upcoming dates"}
+                  </p>
+                </div>
               </div>
-            </div>
-          )}
+            )}
+          </div>
 
           <Separator />
 
-          <div className="space-y-1.5">
-            <Label>Time *</Label>
-            <Input placeholder="e.g. 11:00 AM - Sunset" value={form.time} onChange={e => setForm(f => ({ ...f, time: e.target.value }))} />
+          {/* ── Time ── */}
+          <div className="space-y-3">
+            <div className="flex items-center justify-between gap-3">
+              <Label>Time *</Label>
+              <div className="flex items-center gap-2">
+                <Switch id="allDay" checked={allDay} onCheckedChange={setAllDay} />
+                <Label htmlFor="allDay" className="text-sm font-normal">All day</Label>
+              </div>
+            </div>
+            {!allDay && (
+              <div className="grid grid-cols-2 gap-3">
+                <div className="space-y-1">
+                  <Label className="text-xs text-muted-foreground">Starts</Label>
+                  <Input type="time" value={startTime} onChange={e => setStartTime(e.target.value)} />
+                </div>
+                <div className="space-y-1">
+                  <Label className="text-xs text-muted-foreground">Ends</Label>
+                  <Select value={endMode} onValueChange={v => setEndMode(v as EndMode)}>
+                    <SelectTrigger aria-label="How it ends"><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="none">No end time</SelectItem>
+                      <SelectItem value="time">At a set time</SelectItem>
+                      <SelectItem value="sunset">At sunset</SelectItem>
+                    </SelectContent>
+                  </Select>
+                  {endMode === "time" && (
+                    <Input type="time" aria-label="End time" value={endTime} onChange={e => setEndTime(e.target.value)} />
+                  )}
+                </div>
+              </div>
+            )}
+            {legacyTime && !startTime && !allDay && (
+              <p className="text-xs text-amber-700 dark:text-amber-500">
+                This event's old time, "{legacyTime}", couldn't be read automatically — please set the start time above.
+              </p>
+            )}
           </div>
 
           <div className="space-y-1.5">
             <Label>Location *</Label>
-            <Input placeholder="e.g. Main Sanctuary" value={form.location} onChange={e => setForm(f => ({ ...f, location: e.target.value }))} />
+            <Input placeholder="e.g. Main Sanctuary" value={details.location} onChange={e => setDetails(d => ({ ...d, location: e.target.value }))} />
           </div>
 
           <div className="space-y-1.5">
             <Label>Description</Label>
-            <Textarea rows={3} placeholder="Brief description of the event..." value={form.description} onChange={e => setForm(f => ({ ...f, description: e.target.value }))} />
+            <Textarea rows={3} placeholder="Brief description of the event..." value={details.description} onChange={e => setDetails(d => ({ ...d, description: e.target.value }))} />
           </div>
 
           <div className="space-y-2">
             <Label>Event Image <span className="text-muted-foreground text-xs">(optional)</span></Label>
 
-            {form.imageUrl ? (
+            {details.imageUrl ? (
               <div className="relative w-full overflow-hidden rounded-lg border border-border">
-                <img src={form.imageUrl} alt="Event" className="w-full max-h-48 object-cover" />
+                <img src={details.imageUrl} alt="Event" className="w-full max-h-48 object-cover" />
                 <button
                   type="button"
-                  onClick={() => setForm(f => ({ ...f, imageUrl: null }))}
+                  onClick={() => setDetails(d => ({ ...d, imageUrl: null }))}
                   className="absolute top-2 right-2 rounded-full bg-black/60 p-1 text-white hover:bg-black/80 transition-colors"
                   title="Remove image"
                 >
@@ -380,12 +685,12 @@ export function EventFormDialog({ open, onOpenChange, editingEvent, authHeaders,
               onChange={e => { const f = e.target.files?.[0]; if (f) handleImageUpload(f); e.target.value = ""; }}
             />
             <Button type="button" variant="outline" size="sm" disabled={uploadingImg} onClick={() => imageInputRef.current?.click()}>
-              {uploadingImg ? <><Loader2 className="mr-1.5 h-4 w-4 animate-spin" /> Uploading…</> : <><ImagePlus className="mr-1.5 h-4 w-4" /> {form.imageUrl ? "Replace image" : "Upload image"}</>}
+              {uploadingImg ? <><Loader2 className="mr-1.5 h-4 w-4 animate-spin" /> Uploading…</> : <><ImagePlus className="mr-1.5 h-4 w-4" /> {details.imageUrl ? "Replace image" : "Upload image"}</>}
             </Button>
 
             <details className="text-xs">
               <summary className="text-muted-foreground cursor-pointer hover:text-foreground">or paste an image URL</summary>
-              <Input className="mt-1.5" placeholder="https://..." value={form.imageUrl ?? ""} onChange={e => setForm(f => ({ ...f, imageUrl: e.target.value || null }))} />
+              <Input className="mt-1.5" placeholder="https://..." value={details.imageUrl ?? ""} onChange={e => setDetails(d => ({ ...d, imageUrl: e.target.value || null }))} />
             </details>
           </div>
 
@@ -397,10 +702,12 @@ export function EventFormDialog({ open, onOpenChange, editingEvent, authHeaders,
               {COLOR_OPTIONS.map(c => (
                 <button
                   key={c.value}
+                  type="button"
                   title={c.label}
-                  onClick={() => setForm(f => ({ ...f, color: c.value }))}
+                  aria-label={c.label}
+                  onClick={() => setDetails(d => ({ ...d, color: c.value }))}
                   className={`w-7 h-7 rounded-full ${c.value} ring-offset-background transition-all ${
-                    form.color === c.value ? "ring-2 ring-foreground ring-offset-2 scale-110" : "opacity-70 hover:opacity-100"
+                    details.color === c.value ? "ring-2 ring-foreground ring-offset-2 scale-110" : "opacity-70 hover:opacity-100"
                   }`}
                 />
               ))}
@@ -410,8 +717,8 @@ export function EventFormDialog({ open, onOpenChange, editingEvent, authHeaders,
           <div className="flex items-center gap-3">
             <Switch
               id="featured"
-              checked={form.featured ?? false}
-              onCheckedChange={v => setForm(f => ({ ...f, featured: v }))}
+              checked={details.featured}
+              onCheckedChange={v => setDetails(d => ({ ...d, featured: v }))}
             />
             <Label htmlFor="featured">Mark as Featured event</Label>
           </div>

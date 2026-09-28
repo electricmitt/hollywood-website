@@ -7,7 +7,7 @@ import httpx
 from datetime import date, datetime, timedelta, timezone
 from fastapi import APIRouter, HTTPException, Depends, Response, UploadFile, File
 from fastapi.responses import FileResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field, model_validator
 from typing import Optional
 
 from app.apis.admin_auth import require_admin
@@ -19,38 +19,121 @@ STORAGE_KEY = "church_events"
 
 # ─── Models ──────────────────────────────────────────────────────────────────
 
+_FREQS = ("weekly", "monthly", "yearly")
+_WEEKS_OF_MONTH = (1, 2, 3, 4, -1)  # -1 = last
+_HHMM_RE = re.compile(r"([01]\d|2[0-3]):[0-5]\d")
+
+
+def _check_date(value: Optional[str], field: str) -> Optional[str]:
+    """Validate an optional YYYY-MM-DD string; empty becomes None."""
+    if not value:
+        return None
+    try:
+        datetime.strptime(value, "%Y-%m-%d")
+    except ValueError:
+        raise ValueError(f"{field} must be a YYYY-MM-DD date.")
+    return value
+
+
+def _check_hhmm(value: Optional[str], field: str) -> Optional[str]:
+    """Validate an optional 24-hour HH:MM string; empty becomes None."""
+    if not value:
+        return None
+    if not _HHMM_RE.fullmatch(value):
+        raise ValueError(f"{field} must be a 24-hour HH:MM time.")
+    return value
+
+
 class RecurrenceRule(BaseModel):
-    type: str  # "weekly" | "monthly-last"
-    dayOfWeek: Optional[int] = None  # 0=Sun … 6=Sat
+    freq: Optional[str] = None         # "weekly" | "monthly" | "yearly"
+    interval: int = 1                  # every N weeks / months / years
+    dayOfWeek: Optional[int] = None    # 0=Sun … 6=Sat (weekly, monthly)
+    weekOfMonth: Optional[int] = None  # monthly: 1-4, or -1 for the last one
+    startDate: Optional[str] = None    # series can't occur before this (required for every-N and yearly)
+    endDate: Optional[str] = None      # last possible date, inclusive
+    exceptions: list[str] = []         # skipped dates, YYYY-MM-DD
+    type: Optional[str] = Field(default=None, exclude=True)  # legacy input: "weekly" | "monthly-last"
+
+    @model_validator(mode="after")
+    def _upgrade_legacy(self):
+        """Accept the older {type, dayOfWeek} shape."""
+        if not self.freq and self.type == "weekly":
+            self.freq = "weekly"
+        elif not self.freq and self.type == "monthly-last":
+            self.freq, self.weekOfMonth = "monthly", -1
+        return self
+
 
 class DateRange(BaseModel):
     start: str  # YYYY-MM-DD
-    end: str    # YYYY-MM-DD
+    end: str    # YYYY-MM-DD, inclusive
 
-class ChurchEvent(BaseModel):
+
+class EventFields(BaseModel):
+    """Fields shared by stored events and create/update requests."""
+    title: str
+    date: Optional[str] = None               # YYYY-MM-DD for a one-time event
+    dateRange: Optional[DateRange] = None    # multi-day event
+    recurrence: Optional[RecurrenceRule] = None
+    startTime: Optional[str] = None          # "HH:MM" 24h, church-local
+    endTime: Optional[str] = None
+    endsAtSunset: bool = False
+    allDay: bool = False
+    time: str = ""                           # display label, e.g. "7:30 PM – 9:30 PM"
+    location: str
+    description: str = ""
+    color: Optional[str] = "bg-indigo-500"
+    featured: Optional[bool] = False
+    imageUrl: Optional[str] = None
+
+
+class ChurchEvent(EventFields):
     id: int
-    title: str
-    date: Optional[str] = None          # YYYY-MM-DD for one-off
-    dateRange: Optional[DateRange] = None
-    recurrence: Optional[RecurrenceRule] = None
-    time: str
-    location: str
-    description: str
-    color: Optional[str] = "bg-indigo-500"
-    featured: Optional[bool] = False
-    imageUrl: Optional[str] = None
 
-class CreateEventRequest(BaseModel):
-    title: str
-    date: Optional[str] = None
-    dateRange: Optional[DateRange] = None
-    recurrence: Optional[RecurrenceRule] = None
-    time: str
-    location: str
-    description: str
-    color: Optional[str] = "bg-indigo-500"
-    featured: Optional[bool] = False
-    imageUrl: Optional[str] = None
+
+class CreateEventRequest(EventFields):
+    @model_validator(mode="after")
+    def _validate(self):
+        self.date = _check_date(self.date, "Date")
+        if self.dateRange:
+            _check_date(self.dateRange.start, "Start date")
+            _check_date(self.dateRange.end, "End date")
+            if self.dateRange.end < self.dateRange.start:
+                raise ValueError("The end date is before the start date.")
+
+        rec = self.recurrence
+        if rec:
+            if rec.freq not in _FREQS:
+                raise ValueError("Repeat must be weekly, monthly, or yearly.")
+            if not 1 <= rec.interval <= 12:
+                raise ValueError("Repeat interval must be between 1 and 12.")
+            if rec.freq in ("weekly", "monthly") and (rec.dayOfWeek is None or not 0 <= rec.dayOfWeek <= 6):
+                raise ValueError("Choose a day of the week.")
+            if rec.freq == "monthly" and rec.weekOfMonth not in _WEEKS_OF_MONTH:
+                raise ValueError("Choose which week of the month (first to fourth, or last).")
+            rec.startDate = _check_date(rec.startDate, "Start date")
+            rec.endDate = _check_date(rec.endDate, "End date")
+            if (rec.freq == "yearly" or rec.interval > 1) and not rec.startDate:
+                raise ValueError("This repeat needs a start date.")
+            if rec.startDate and rec.endDate and rec.endDate < rec.startDate:
+                raise ValueError("The repeat ends before it starts.")
+            if len(rec.exceptions) > 500:
+                raise ValueError("Too many skipped dates.")
+            rec.exceptions = sorted({_check_date(d, "Skipped date") for d in rec.exceptions if d})
+
+        if sum(bool(x) for x in (self.date, self.dateRange, rec)) != 1:
+            raise ValueError("Choose one schedule: a single date, a date range, or a repeat.")
+
+        self.startTime = _check_hhmm(self.startTime, "Start time")
+        self.endTime = _check_hhmm(self.endTime, "End time")
+        if self.allDay:
+            self.startTime = self.endTime = None
+            self.endsAtSunset = False
+        if self.endsAtSunset:
+            self.endTime = None
+        if (self.endTime or self.endsAtSunset) and not self.startTime:
+            raise ValueError("Set a start time.")
+        return self
 
 class EventsResponse(BaseModel):
     events: list[ChurchEvent]
@@ -132,13 +215,66 @@ DEFAULT_EVENTS = [
 
 # ─── Storage helpers ──────────────────────────────────────────────────────────
 
+def _fmt_hhmm(t: Optional[tuple[int, int]]) -> Optional[str]:
+    return f"{t[0]:02d}:{t[1]:02d}" if t else None
+
+
+def _fill_times_from_text(ev: dict) -> None:
+    """Give an event structured times parsed from its time label, if it has none."""
+    if ev.get("allDay") or ev.get("startTime") or not ev.get("time"):
+        return
+    start, end, sunset = _parse_times(ev["time"])
+    ev.update(startTime=_fmt_hhmm(start), endTime=_fmt_hhmm(end), endsAtSunset=sunset)
+
+
+def _upgrade_stored_event(ev: dict) -> bool:
+    """Bring an event saved by an older version up to the current shape, in place.
+
+    Returns True if anything changed.
+    """
+    changed = False
+    rec = ev.get("recurrence")
+    if rec is not None:
+        if not rec.get("freq"):
+            if rec.get("type") == "weekly":
+                rec["freq"] = "weekly"
+            elif rec.get("type") == "monthly-last":
+                rec["freq"], rec["weekOfMonth"] = "monthly", -1
+            changed = True
+        for key, default in (("interval", 1), ("exceptions", [])):
+            if key not in rec:
+                rec[key] = default
+                changed = True
+        if "type" in rec:
+            del rec["type"]
+            changed = True
+    if "startTime" not in ev:
+        ev.update(startTime=None, endTime=None, endsAtSunset=False, allDay=False)
+        _fill_times_from_text(ev)
+        changed = True
+    if ev.get("date") == "":
+        ev["date"] = None
+        changed = True
+    return changed
+
+
 def load_events() -> list[dict]:
     """Load events from storage, seeding defaults if not yet set."""
     data = json_get(STORAGE_KEY, default=None)
     if data is None:
-        # First run — seed with defaults
-        json_put(STORAGE_KEY, DEFAULT_EVENTS)
-        return DEFAULT_EVENTS
+        # First run — seed with a copy of the defaults.
+        data = json.loads(json.dumps(DEFAULT_EVENTS))
+        for ev in data:
+            _upgrade_stored_event(ev)
+        json_put(STORAGE_KEY, data)
+        return data
+
+    original = json.loads(json.dumps(data))
+    if any([_upgrade_stored_event(ev) for ev in data]):
+        # One-time upgrade of older data; keep a copy of what was there first.
+        json_put(f"{STORAGE_KEY}_backup_{datetime.now():%Y%m%d%H%M%S}", original)
+        json_put(STORAGE_KEY, data)
+        print(f"Upgraded stored events to the current format ({len(data)} events)")
     return data
 
 def save_events(events: list[dict]) -> None:
@@ -162,6 +298,7 @@ def create_event(body: CreateEventRequest) -> ChurchEvent:
     """Add a new event."""
     raw = load_events()
     new_event = body.model_dump()
+    _fill_times_from_text(new_event)
     new_event["id"] = next_id(raw)
     raw.append(new_event)
     save_events(raw)
@@ -176,6 +313,7 @@ def update_event(event_id: int, body: CreateEventRequest) -> ChurchEvent:
     if idx is None:
         raise HTTPException(status_code=404, detail=f"Event {event_id} not found")
     updated = body.model_dump()
+    _fill_times_from_text(updated)
     updated["id"] = event_id
     raw[idx] = updated
     save_events(raw)
@@ -193,6 +331,40 @@ def delete_event(event_id: int) -> DeleteResponse:
     save_events(raw)
     print(f"Deleted event id={event_id}")
     return DeleteResponse(success=True, message=f"Event {event_id} deleted")
+
+
+class SkipDateRequest(BaseModel):
+    date: str          # YYYY-MM-DD occurrence to skip
+    skip: bool = True  # False restores a previously skipped date
+
+
+@router.post("/skip-date/{event_id}", dependencies=[Depends(require_admin)])
+def skip_date(event_id: int, body: SkipDateRequest) -> ChurchEvent:
+    """Skip (or restore) a single date of a repeating event."""
+    try:
+        day = _check_date(body.date, "Date")
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    if not day:
+        raise HTTPException(status_code=400, detail="A date is required.")
+
+    raw = load_events()
+    ev = next((e for e in raw if e["id"] == event_id), None)
+    if ev is None:
+        raise HTTPException(status_code=404, detail=f"Event {event_id} not found")
+    rec = ev.get("recurrence")
+    if not rec:
+        raise HTTPException(status_code=400, detail="Only repeating events have dates to skip.")
+
+    skipped = set(rec.get("exceptions") or [])
+    if body.skip:
+        skipped.add(day)
+    else:
+        skipped.discard(day)
+    rec["exceptions"] = sorted(skipped)
+    save_events(raw)
+    print(f"{'Skipped' if body.skip else 'Restored'} {day} for event id={event_id}")
+    return ChurchEvent(**ev)
 
 
 # ─── iCal subscription feed ───────────────────────────────────────────────────
@@ -364,9 +536,90 @@ def _fold(line: str) -> str:
     return "\r\n".join(out)
 
 
+def _parse_iso(value: Optional[str]) -> Optional[date]:
+    return datetime.strptime(value, "%Y-%m-%d").date() if value else None
+
+
+def _hhmm_tuple(value: Optional[str]) -> Optional[tuple[int, int]]:
+    if not value:
+        return None
+    h, m = value.split(":")
+    return (int(h), int(m))
+
+
+def _event_times(ev: dict) -> tuple[Optional[tuple[int, int]], Optional[tuple[int, int]], bool]:
+    """(start, end, until_sunset) from the structured fields, else parsed from the label."""
+    if ev.get("allDay"):
+        return None, None, False
+    start = _hhmm_tuple(ev.get("startTime"))
+    if start:
+        end = _hhmm_tuple(ev.get("endTime"))
+        return start, end, bool(ev.get("endsAtSunset")) and not end
+    return _parse_times(ev.get("time", ""))
+
+
+def _nth_weekday(year: int, month: int, dow: int, n: int) -> date:
+    """The nth (1-4) or last (-1) given weekday of a month."""
+    if n == -1:
+        return _last_weekday_of_month(year, month, dow)
+    first = date(year, month, 1)
+    return first + timedelta(days=(dow - _our_dow(first)) % 7 + 7 * (n - 1))
+
+
+def _add_months(year: int, month: int, k: int) -> tuple[int, int]:
+    total = year * 12 + (month - 1) + k
+    return total // 12, total % 12 + 1
+
+
+def _first_occurrence(rec: dict) -> Optional[date]:
+    """First date of a repeating series (its DTSTART).
+
+    Mirrors firstOccurrence() in frontend/src/utils/eventSchedule.ts — keep in sync.
+    """
+    start = _parse_iso(rec.get("startDate"))
+    today = date.today()
+    freq, dow = rec.get("freq"), rec.get("dayOfWeek")
+    if freq == "weekly":
+        return _first_on_or_after(start or date(today.year, 1, 1), dow)
+    if freq == "monthly":
+        base = start or date(today.year, today.month, 1)
+        for k in range(24):
+            y, m = _add_months(base.year, base.month, k)
+            d = _nth_weekday(y, m, dow, rec.get("weekOfMonth") or -1)
+            if d >= base:
+                return d
+        return None
+    if freq == "yearly":
+        return start
+    return None
+
+
+def _until(end: date, all_day: bool) -> str:
+    """RRULE UNTIL for an inclusive end date (UTC when the series has a TZID start)."""
+    if all_day:
+        return f"{end:%Y%m%d}"
+    local = datetime(end.year, end.month, end.day, 23, 59, 59)
+    return f"{local - timedelta(hours=_eastern_utc_offset(end)):%Y%m%dT%H%M%SZ}"
+
+
+def _rrule(rec: dict, all_day: bool) -> str:
+    freq = rec["freq"]
+    parts = [f"FREQ={freq.upper()}"]
+    if (rec.get("interval") or 1) > 1:
+        parts.append(f"INTERVAL={rec['interval']}")
+    if freq == "weekly":
+        parts.append(f"BYDAY={_BYDAY[rec['dayOfWeek']]}")
+    elif freq == "monthly":
+        parts.append(f"BYDAY={rec.get('weekOfMonth') or -1}{_BYDAY[rec['dayOfWeek']]}")
+    end = _parse_iso(rec.get("endDate"))
+    if end:
+        parts.append(f"UNTIL={_until(end, all_day)}")
+    return "RRULE:" + ";".join(parts)
+
+
 def _vevent_lines(ev: dict, dtstamp: str) -> list[str]:
     """Build the VEVENT body lines for one stored event, or [] if unschedulable."""
-    start_t, end_t, until_sunset = _parse_times(ev.get("time", ""))
+    start_t, end_t, until_sunset = _event_times(ev)
     uid = f"hollywood-event-{ev['id']}@church"
 
     def timed(d: date, sunset_ref: Optional[date] = None) -> tuple[str, str]:
@@ -396,32 +649,39 @@ def _vevent_lines(ev: dict, dtstamp: str) -> list[str]:
 
     dt_lines: list[str] = []
     rrule: Optional[str] = None
+    exdates: list[str] = []
 
     if ev.get("date"):
-        d = datetime.strptime(ev["date"], "%Y-%m-%d").date()
+        d = _parse_iso(ev["date"])
         dt_lines = list(timed(d) if start_t else all_day(d))
     elif ev.get("dateRange"):
-        start = datetime.strptime(ev["dateRange"]["start"], "%Y-%m-%d").date()
-        end = datetime.strptime(ev["dateRange"]["end"], "%Y-%m-%d").date()
-        # Multi-day events render as an all-day span (DTEND is exclusive).
-        dt_lines = list(all_day(start, days=(end - start).days + 1))
+        start = _parse_iso(ev["dateRange"]["start"])
+        end = _parse_iso(ev["dateRange"]["end"])
+        if start_t:
+            # Timed multi-day event: the same hours each day through the end date.
+            dt_lines = list(timed(start))
+            rrule = f"RRULE:FREQ=DAILY;UNTIL={_until(end, all_day=False)}"
+        else:
+            # All-day span (DTEND is exclusive).
+            dt_lines = list(all_day(start, days=(end - start).days + 1))
     elif ev.get("recurrence"):
         rec = ev["recurrence"]
-        dow = rec.get("dayOfWeek")
-        if dow is None:
+        if rec.get("freq") in ("weekly", "monthly") and rec.get("dayOfWeek") is None:
             return []
-        if rec.get("type") == "weekly":
-            anchor = _first_on_or_after(date(date.today().year, 1, 1), dow)
-            rrule = f"RRULE:FREQ=WEEKLY;BYDAY={_BYDAY[dow]}"
-        elif rec.get("type") == "monthly-last":
-            today = date.today()
-            anchor = _last_weekday_of_month(today.year, today.month, dow)
-            rrule = f"RRULE:FREQ=MONTHLY;BYDAY=-1{_BYDAY[dow]}"
-        else:
+        first = _first_occurrence(rec)
+        last = _parse_iso(rec.get("endDate"))
+        if first is None or (last and first > last):
             return []
         # One RRULE shares a single end time, so a recurring "until sunset" uses
         # today's sunset; subscribers re-fetch the feed, so it tracks the season.
-        dt_lines = list(timed(anchor, sunset_ref=date.today()) if start_t else all_day(anchor))
+        dt_lines = list(timed(first, sunset_ref=date.today()) if start_t else all_day(first))
+        rrule = _rrule(rec, all_day=not start_t)
+        skipped = sorted(_parse_iso(d) for d in rec.get("exceptions") or [])
+        if skipped and start_t:
+            sh, sm = start_t
+            exdates.append(f"EXDATE;TZID={CHURCH_TZ}:" + ",".join(f"{d:%Y%m%d}T{sh:02d}{sm:02d}00" for d in skipped))
+        elif skipped:
+            exdates.append("EXDATE;VALUE=DATE:" + ",".join(f"{d:%Y%m%d}" for d in skipped))
     else:
         return []
 
@@ -433,6 +693,7 @@ def _vevent_lines(ev: dict, dtstamp: str) -> list[str]:
     ]
     if rrule:
         lines.append(rrule)
+    lines.extend(exdates)
     lines.append(f"SUMMARY:{_escape(ev.get('title', 'Event'))}")
     if ev.get("location"):
         lines.append(f"LOCATION:{_escape(ev['location'])}")

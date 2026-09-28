@@ -6,33 +6,30 @@ import {
   DropdownMenuContent,
   DropdownMenuItem,
 } from "@/components/ui/dropdown-menu";
-import { Calendar, Clock, MapPin, CalendarPlus, CalendarDays } from "lucide-react";
-import { googleCalendarUrl, downloadEventIcs, nextOccurrence, formatSchedule } from "utils/calendarLinks";
-
-export interface DetailEvent {
-  title: string;
-  time: string;
-  location: string;
-  description: string;
-  imageUrl?: string | null;
-  color?: string | null;
-  date?: string | null;
-  dateRange?: { start: string; end: string } | null;
-  recurrence?: { type: string; dayOfWeek?: number | null } | null;
-}
+import { Calendar, Clock, MapPin, CalendarPlus, CalendarDays, Pencil, Trash2, CalendarX } from "lucide-react";
+import { googleCalendarUrl, downloadEventIcs } from "utils/calendarLinks";
+import { describeSchedule, linkOccurrence, timeLabel } from "utils/eventSchedule";
+import type { ChurchEvent } from "../apiclient/data-contracts";
 
 interface Props {
-  event: DetailEvent | null;
+  event: ChurchEvent | null;
   onOpenChange: (open: boolean) => void;
   /** Specific occurrence to add to calendar (e.g. the day clicked on the calendar). Defaults to the next occurrence. */
   occurrenceDate?: Date;
   /** When provided, shows a "View in Calendar" button that calls this. */
   onViewCalendar?: () => void;
+  /** Admin actions — each is shown only when provided. */
+  onEdit?: (event: ChurchEvent) => void;
+  onDelete?: (event: ChurchEvent) => void;
+  /** Skip just this occurrence of a repeating event (needs occurrenceDate). */
+  onSkipDate?: (event: ChurchEvent, day: Date) => void;
 }
 
-/** Read-only event details with add-to-calendar and an optional link to the full calendar. */
-export function EventDetailDialog({ event, onOpenChange, occurrenceDate, onViewCalendar }: Props) {
-  const occurrence = occurrenceDate ?? (event ? nextOccurrence(event) : new Date());
+/** Event details with add-to-calendar, plus admin actions when enabled. */
+export function EventDetailDialog({ event, onOpenChange, occurrenceDate, onViewCalendar, onEdit, onDelete, onSkipDate }: Props) {
+  const occurrence = occurrenceDate ?? (event ? linkOccurrence(event) : new Date());
+  const canSkip = !!(onSkipDate && event?.recurrence && occurrenceDate);
+  const hasAdminActions = !!(onEdit || onDelete || canSkip);
 
   return (
     <Dialog open={event !== null} onOpenChange={onOpenChange}>
@@ -51,12 +48,14 @@ export function EventDetailDialog({ event, onOpenChange, occurrenceDate, onViewC
             <div className="space-y-3 py-2">
               <div className="flex items-center gap-2 text-sm text-muted-foreground">
                 <Calendar size={15} className="flex-shrink-0" />
-                <span>{formatSchedule(event)}</span>
+                <span>{describeSchedule(event)}</span>
               </div>
-              <div className="flex items-center gap-2 text-sm text-muted-foreground">
-                <Clock size={15} className="flex-shrink-0" />
-                <span>{event.time}</span>
-              </div>
+              {timeLabel(event) && (
+                <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                  <Clock size={15} className="flex-shrink-0" />
+                  <span>{timeLabel(event)}</span>
+                </div>
+              )}
               <div className="flex items-center gap-2 text-sm text-muted-foreground">
                 <MapPin size={15} className="flex-shrink-0" />
                 <span>{event.location}</span>
@@ -65,6 +64,27 @@ export function EventDetailDialog({ event, onOpenChange, occurrenceDate, onViewC
                 <p className="text-sm leading-relaxed pt-2 whitespace-pre-line">{event.description}</p>
               )}
             </div>
+
+            {hasAdminActions && (
+              <div className="flex flex-wrap gap-2 rounded-lg border border-amber-500/30 bg-amber-500/5 p-3">
+                {onEdit && (
+                  <Button size="sm" variant="outline" onClick={() => onEdit(event)}>
+                    <Pencil className="mr-1.5 h-3.5 w-3.5" /> Edit
+                  </Button>
+                )}
+                {canSkip && (
+                  <Button size="sm" variant="outline" onClick={() => onSkipDate!(event, occurrenceDate!)}>
+                    <CalendarX className="mr-1.5 h-3.5 w-3.5" />
+                    Skip {occurrenceDate!.toLocaleDateString("en-US", { month: "short", day: "numeric" })} only
+                  </Button>
+                )}
+                {onDelete && (
+                  <Button size="sm" variant="ghost" className="text-destructive hover:text-destructive" onClick={() => onDelete(event)}>
+                    <Trash2 className="mr-1.5 h-3.5 w-3.5" /> Delete{event.recurrence ? " series" : ""}
+                  </Button>
+                )}
+              </div>
+            )}
 
             <DialogFooter className="flex-col sm:flex-row gap-2">
               {onViewCalendar && (

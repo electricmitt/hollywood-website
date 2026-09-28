@@ -5,6 +5,7 @@ import { AppProvider } from "components/AppProvider";
 import { Navigation } from "components/Navigation";
 import { Footer } from "components/Footer";
 import { DocumentTitle } from "components/DocumentTitle";
+import { Toaster } from "@/components/ui/sonner";
 
 export const SuspenseWrapper = ({ children }: { children: ReactNode }) => {
   return <Suspense>{children}</Suspense>;
@@ -29,6 +30,8 @@ export const router = createBrowserRouter(
             <Outlet />
           </SuspenseWrapper>
           <Footer />
+          {/* Renders every toast() message; without it they were silently dropped. */}
+          <Toaster position="top-center" richColors closeButton />
         </AppProvider>
       ),
       children: userRoutes

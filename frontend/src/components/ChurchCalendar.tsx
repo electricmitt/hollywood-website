@@ -1,28 +1,11 @@
-import { useState, useMemo } from "react";
-import { ChevronLeft, ChevronRight, MapPin, Clock, Pencil, Trash2, CalendarPlus } from "lucide-react";
+import { useState, useMemo, type KeyboardEvent } from "react";
+import { ChevronLeft, ChevronRight, MapPin, Clock, Pencil, Trash2, CalendarPlus, Plus } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
+import { occursOn, sameDay, startMinutes, startOfDay, timeLabel } from "utils/eventSchedule";
+import type { ChurchEvent } from "../apiclient/data-contracts";
 
-// ─── Types ───────────────────────────────────────────────────────────────────
-
-export interface ChurchEvent {
-  id: number;
-  title: string;
-  /** ISO date string (YYYY-MM-DD) for one-off events */
-  date?: string;
-  /** ISO date range strings for multi-day events */
-  dateRange?: { start: string; end: string };
-  /** Recurring rule */
-  recurrence?: {
-    type: "weekly" | "monthly-last";
-    /** 0 = Sunday … 6 = Saturday */
-    dayOfWeek?: number;
-  };
-  time: string;
-  location: string;
-  description: string;
-  color?: string; // tailwind bg class
-}
+export type { ChurchEvent };
 
 type ViewMode = "day" | "week" | "month" | "year";
 
@@ -32,6 +15,8 @@ interface Props {
   onDelete?: (id: number) => void;
   /** Open the shared detail dialog for an event on a specific day. */
   onViewDetails?: (event: ChurchEvent, occurrenceDate: Date) => void;
+  /** Admin: start a new event on the given day. */
+  onAddOnDate?: (day: Date) => void;
 }
 
 // ─── Constants & helpers ───────────────────────────────────────────────────────
@@ -49,43 +34,13 @@ const EVENT_COLORS = [
   "bg-emerald-500", "bg-rose-500", "bg-sky-500",
 ];
 
-function toLocalDate(iso: string): Date {
-  const [y, m, d] = iso.split("-").map(Number);
-  return new Date(y, m - 1, d);
-}
-function sameDay(a: Date, b: Date) {
-  return a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate();
-}
 function addDays(d: Date, n: number) { const x = new Date(d); x.setDate(x.getDate() + n); return x; }
 function startOfWeek(d: Date) { return addDays(d, -d.getDay()); }
-function midnight(d: Date) { const x = new Date(d); x.setHours(0, 0, 0, 0); return x; }
-
-function lastWeekdayOfMonth(year: number, month: number, dow: number): Date {
-  const lastDay = new Date(year, month + 1, 0);
-  const diff = (lastDay.getDay() - dow + 7) % 7;
-  return new Date(year, month, lastDay.getDate() - diff);
-}
-
-function eventOccursOn(event: ChurchEvent, day: Date): boolean {
-  if (event.date) return sameDay(toLocalDate(event.date), day);
-  if (event.dateRange) {
-    const start = toLocalDate(event.dateRange.start);
-    const end = toLocalDate(event.dateRange.end);
-    return day >= start && day <= end;
-  }
-  if (event.recurrence) {
-    const { type, dayOfWeek } = event.recurrence;
-    if (dayOfWeek === undefined) return false;
-    if (type === "weekly") return day.getDay() === dayOfWeek;
-    if (type === "monthly-last") return sameDay(day, lastWeekdayOfMonth(day.getFullYear(), day.getMonth(), dayOfWeek));
-  }
-  return false;
-}
 
 // ─── Component ───────────────────────────────────────────────────────────────
 
-export function ChurchCalendar({ events, onEdit, onDelete, onViewDetails }: Props) {
-  const today = midnight(new Date());
+export function ChurchCalendar({ events, onEdit, onDelete, onViewDetails, onAddOnDate }: Props) {
+  const today = startOfDay(new Date());
   const [view, setView] = useState<ViewMode>("month");
   const [cursor, setCursor] = useState<Date>(today);
 
@@ -95,7 +50,8 @@ export function ChurchCalendar({ events, onEdit, onDelete, onViewDetails }: Prop
     return map;
   }, [events]);
 
-  const eventsOnDay = (day: Date) => events.filter(e => eventOccursOn(e, day));
+  const eventsOnDay = (day: Date) =>
+    events.filter(e => occursOn(e, day)).sort((a, b) => startMinutes(a) - startMinutes(b));
   const isToday = (day: Date) => sameDay(day, today);
 
   // ── Navigation ──
@@ -120,6 +76,21 @@ export function ChurchCalendar({ events, onEdit, onDelete, onViewDetails }: Prop
     if (view === "month") return `${MONTH_NAMES[cursor.getMonth()]} ${cursor.getFullYear()}`;
     return `${cursor.getFullYear()}`;
   };
+
+  // Day cells hold event buttons, so they're focusable containers rather than
+  // <button>s (buttons can't nest). Enter/Space opens the day like a click.
+  const dayCellProps = (day: Date) => ({
+    role: "button",
+    tabIndex: 0,
+    "aria-label": `${DAY_FULL[day.getDay()]}, ${MONTH_NAMES[day.getMonth()]} ${day.getDate()}`,
+    onClick: () => openDay(day),
+    onKeyDown: (e: KeyboardEvent) => {
+      if (e.target === e.currentTarget && (e.key === "Enter" || e.key === " ")) {
+        e.preventDefault();
+        openDay(day);
+      }
+    },
+  });
 
   // ── Reusable event pill (grids) ──
   const pill = (ev: ChurchEvent, day: Date) => (
@@ -189,17 +160,17 @@ export function ChurchCalendar({ events, onEdit, onDelete, onViewDetails }: Prop
             if (!day) return <div key={`b-${idx}`} className="bg-card/40 min-h-[96px] md:min-h-[124px]" />;
             const dayEvents = eventsOnDay(day);
             return (
-              <button
+              <div
                 key={day.toISOString()}
-                onClick={() => openDay(day)}
-                className="relative bg-card min-h-[96px] md:min-h-[124px] p-2 text-left hover:bg-accent/60 transition-colors focus:outline-none focus:ring-2 focus:ring-inset focus:ring-indigo-500"
+                {...dayCellProps(day)}
+                className="relative bg-card min-h-[96px] md:min-h-[124px] p-2 text-left cursor-pointer hover:bg-accent/60 transition-colors focus:outline-none focus:ring-2 focus:ring-inset focus:ring-indigo-500"
               >
                 <span className={cn("inline-flex items-center justify-center w-7 h-7 rounded-full text-sm font-semibold", isToday(day) ? "bg-indigo-500 text-white" : "text-foreground")}>{day.getDate()}</span>
                 <div className="mt-1 flex flex-col gap-0.5 overflow-hidden">
                   {dayEvents.slice(0, 3).map(ev => pill(ev, day))}
                   {dayEvents.length > 3 && <span className="text-[10px] text-muted-foreground pl-1">+{dayEvents.length - 3} more</span>}
                 </div>
-              </button>
+              </div>
             );
           })}
         </div>
@@ -216,10 +187,10 @@ export function ChurchCalendar({ events, onEdit, onDelete, onViewDetails }: Prop
         {days.map(day => {
           const dayEvents = eventsOnDay(day);
           return (
-            <button
+            <div
               key={day.toISOString()}
-              onClick={() => openDay(day)}
-              className="bg-card min-h-[160px] p-2 text-left hover:bg-accent/60 transition-colors focus:outline-none focus:ring-2 focus:ring-inset focus:ring-indigo-500"
+              {...dayCellProps(day)}
+              className="bg-card min-h-[160px] p-2 text-left cursor-pointer hover:bg-accent/60 transition-colors focus:outline-none focus:ring-2 focus:ring-inset focus:ring-indigo-500"
             >
               <div className="flex items-center gap-1.5 mb-2">
                 <span className="text-xs font-semibold text-muted-foreground uppercase">{DAY_ABBR[day.getDay()]}</span>
@@ -229,7 +200,7 @@ export function ChurchCalendar({ events, onEdit, onDelete, onViewDetails }: Prop
                 {dayEvents.map(ev => pill(ev, day))}
                 {dayEvents.length === 0 && <span className="text-[10px] text-muted-foreground">—</span>}
               </div>
-            </button>
+            </div>
           );
         })}
       </div>
@@ -262,13 +233,20 @@ export function ChurchCalendar({ events, onEdit, onDelete, onViewDetails }: Prop
                     </div>
                   </div>
                   <div className="flex flex-wrap gap-x-4 gap-y-1.5 mb-2">
-                    <span className="flex items-center gap-1.5 text-xs text-muted-foreground"><Clock size={13} />{ev.time}</span>
+                    <span className="flex items-center gap-1.5 text-xs text-muted-foreground"><Clock size={13} />{timeLabel(ev)}</span>
                     <span className="flex items-center gap-1.5 text-xs text-muted-foreground"><MapPin size={13} />{ev.location}</span>
                   </div>
                   {ev.description && <p className="text-sm text-muted-foreground leading-relaxed">{ev.description}</p>}
                 </div>
               </div>
             ))}
+          </div>
+        )}
+        {onAddOnDate && (
+          <div className="border-t border-border p-3 flex justify-center">
+            <Button variant="outline" size="sm" onClick={() => onAddOnDate(cursor)}>
+              <Plus className="mr-1.5 h-4 w-4" /> Add event on this day
+            </Button>
           </div>
         )}
       </div>

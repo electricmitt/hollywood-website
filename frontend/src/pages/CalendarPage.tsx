@@ -6,7 +6,8 @@ import { AdminLoginDialog } from "components/AdminLoginDialog";
 import { EventDetailDialog } from "components/EventDetailDialog";
 import { useNavigate } from "react-router-dom";
 import { ArrowLeft, Plus, AlertCircle, Lock, Unlock, LogOut, Bell, Copy, Check, CalendarPlus } from "lucide-react";
-import { subscriptionFeedUrl, subscriptionFeedWebcal } from "utils/calendarLinks";
+import { apiUrl, subscriptionFeedUrl, subscriptionFeedWebcal } from "utils/calendarLinks";
+import { toIsoDate } from "utils/eventSchedule";
 import { useAdminSession } from "utils/useAdminSession";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Button } from "@/components/ui/button";
@@ -31,6 +32,7 @@ export default function CalendarPage() {
   // ── Event dialog state ──
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editingEvent, setEditingEvent] = useState<ChurchEvent | null>(null);
+  const [addDate, setAddDate] = useState<Date | null>(null);
   const [deleteConfirmId, setDeleteConfirmId] = useState<number | null>(null);
 
   // ── Visitor detail view ──
@@ -41,20 +43,8 @@ export default function CalendarPage() {
     try {
       const res = await apiClient.get_events();
       const data = await res.json();
-      const mapped: ChurchEvent[] = (data.events ?? []).map((e: any) => ({
-        id: e.id,
-        title: e.title,
-        date: e.date ?? undefined,
-        dateRange: e.dateRange ?? undefined,
-        recurrence: e.recurrence ?? undefined,
-        time: e.time,
-        location: e.location,
-        description: e.description,
-        color: e.color ?? "bg-indigo-500",
-        featured: e.featured ?? false,
-        imageUrl: e.imageUrl ?? undefined,
-      }));
-      setEvents(mapped);
+      // Keep the full API objects so edits never drop fields.
+      setEvents(data.events ?? []);
     } catch {
       toast.error("Failed to load events");
     } finally {
@@ -69,8 +59,25 @@ export default function CalendarPage() {
     toast.success("Admin mode disabled");
   };
 
-  const openAdd = () => { setEditingEvent(null); setDialogOpen(true); };
-  const openEdit = (event: ChurchEvent) => { setEditingEvent(event); setDialogOpen(true); };
+  const openAdd = (day: Date | null = null) => { setEditingEvent(null); setAddDate(day); setDialogOpen(true); };
+  const openEdit = (event: ChurchEvent) => { setEditingEvent(event); setAddDate(null); setDialogOpen(true); };
+
+  // ── Skip one date of a repeating event ──
+  const handleSkipDate = async (event: ChurchEvent, day: Date) => {
+    try {
+      const res = await fetch(apiUrl(`/events/skip-date/${event.id}`), {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...authHeaders().headers },
+        body: JSON.stringify({ date: toIsoDate(day) }),
+      });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      toast.success(`Skipped ${event.title} on ${day.toLocaleDateString("en-US", { month: "short", day: "numeric" })}`);
+      setDetailEvent(null);
+      await loadEvents();
+    } catch {
+      toast.error("Couldn't skip that date. Your admin session may have expired — try logging in again.");
+    }
+  };
 
   // ── Copy feed URL ──
   const handleCopyFeed = async () => {
@@ -122,7 +129,7 @@ export default function CalendarPage() {
             </Button>
             {isAdmin && (
               <>
-                <Button onClick={openAdd} size="lg">
+                <Button onClick={() => openAdd()} size="lg">
                   <Plus className="mr-2 h-4 w-4" /> Add Event
                 </Button>
                 <Button
@@ -166,6 +173,7 @@ export default function CalendarPage() {
             onEdit={isAdmin ? openEdit : undefined}
             onDelete={isAdmin ? (id) => setDeleteConfirmId(id) : undefined}
             onViewDetails={(ev, day) => { setDetailDate(day); setDetailEvent(ev); }}
+            onAddOnDate={isAdmin ? (day) => openAdd(day) : undefined}
           />
         )}
       </div>
@@ -175,6 +183,9 @@ export default function CalendarPage() {
         event={detailEvent}
         occurrenceDate={detailDate}
         onOpenChange={(o) => { if (!o) setDetailEvent(null); }}
+        onEdit={isAdmin ? (ev) => { setDetailEvent(null); openEdit(ev); } : undefined}
+        onDelete={isAdmin ? (ev) => { setDetailEvent(null); setDeleteConfirmId(ev.id); } : undefined}
+        onSkipDate={isAdmin ? handleSkipDate : undefined}
       />
 
       {/* ── Admin Login Dialog ── */}
@@ -227,6 +238,7 @@ export default function CalendarPage() {
         open={dialogOpen}
         onOpenChange={setDialogOpen}
         editingEvent={editingEvent}
+        initialDate={addDate}
         authHeaders={authHeaders}
         onSaved={loadEvents}
       />
