@@ -6,7 +6,8 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { Calendar, MapPin, Clock, Bell, Lock, LogOut, Plus, Pencil, Trash2, Unlock, AlertCircle } from "lucide-react";
 import { useNavigate } from "react-router-dom";
-import { subscriptionFeedWebcal, formatSchedule } from "utils/calendarLinks";
+import { subscriptionFeedWebcal } from "utils/calendarLinks";
+import { describeSchedule, nextOccurrence, startMinutes, timeLabel } from "utils/eventSchedule";
 import { useAdminSession } from "utils/useAdminSession";
 import { EventFormDialog } from "components/EventFormDialog";
 import { AdminLoginDialog } from "components/AdminLoginDialog";
@@ -64,24 +65,13 @@ export default function Events() {
     }
   };
 
-  // Hide events that have already finished. Recurring events are ongoing and
-  // always shown; a one-off is kept while its date is today or later; a
-  // date-range is kept until its end date passes. (The calendar still shows
-  // past events when you browse earlier months.)
-  const isUpcoming = (e: ChurchEvent): boolean => {
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-    const parse = (iso: string) => {
-      const [y, m, d] = iso.split("-").map(Number);
-      return new Date(y, m - 1, d);
-    };
-    if (e.recurrence) return true;
-    if (e.dateRange) return parse(e.dateRange.end) >= today;
-    if (e.date) return parse(e.date) >= today;
-    return true;
-  };
-
-  const upcoming = events.filter(isUpcoming);
+  // Only events that still have a date ahead (the calendar keeps past ones),
+  // soonest first, then by start time.
+  const upcoming = events
+    .map(e => ({ e, next: nextOccurrence(e) }))
+    .filter((x): x is { e: ChurchEvent; next: Date } => x.next !== null)
+    .sort((a, b) => a.next.getTime() - b.next.getTime() || startMinutes(a.e) - startMinutes(b.e))
+    .map(x => x.e);
   const featured = upcoming.filter(e => e.featured);
   const regular = upcoming.filter(e => !e.featured);
 
@@ -176,11 +166,11 @@ export default function Events() {
                         <div className="flex flex-col space-y-3 mb-4">
                           <div className="flex items-center text-muted-foreground">
                             <Calendar size={16} className="mr-2" />
-                            <span>{formatSchedule(event)}</span>
+                            <span>{describeSchedule(event)}</span>
                           </div>
                           <div className="flex items-center text-muted-foreground">
                             <Clock size={16} className="mr-2" />
-                            <span>{event.time}</span>
+                            <span>{timeLabel(event)}</span>
                           </div>
                           <div className="flex items-center text-muted-foreground">
                             <MapPin size={16} className="mr-2" />
@@ -223,11 +213,11 @@ export default function Events() {
                       <div className="flex flex-col space-y-2 mb-4">
                         <div className="flex items-center text-sm text-muted-foreground">
                           <Calendar size={14} className="mr-2" />
-                          <span>{formatSchedule(event)}</span>
+                          <span>{describeSchedule(event)}</span>
                         </div>
                         <div className="flex items-center text-sm text-muted-foreground">
                           <Clock size={14} className="mr-2" />
-                          <span>{event.time}</span>
+                          <span>{timeLabel(event)}</span>
                         </div>
                         <div className="flex items-center text-sm text-muted-foreground">
                           <MapPin size={14} className="mr-2" />
@@ -310,6 +300,8 @@ export default function Events() {
         event={detailEvent}
         onOpenChange={(o) => { if (!o) setDetailEvent(null); }}
         onViewCalendar={() => { setDetailEvent(null); navigate("/calendarpage"); }}
+        onEdit={isAdmin ? (ev) => { setDetailEvent(null); openEdit(ev); } : undefined}
+        onDelete={isAdmin ? (ev) => { setDetailEvent(null); setDeleteConfirmId(ev.id); } : undefined}
       />
 
       {/* ── Admin Login Dialog ── */}

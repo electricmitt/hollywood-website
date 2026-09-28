@@ -1,4 +1,5 @@
-import { useTheme } from "next-themes";
+// The site uses its own ThemeProvider (internal-components), not next-themes.
+import { useTheme } from "@/hooks/use-theme";
 import { Toaster as Sonner } from "sonner";
 
 type ToasterProps = React.ComponentProps<typeof Sonner>;

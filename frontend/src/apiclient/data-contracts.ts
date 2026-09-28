@@ -32,12 +32,20 @@ export interface ChurchEvent {
   date?: string | null;
   dateRange?: DateRange | null;
   recurrence?: RecurrenceRule | null;
-  /** Time */
+  /** Start time, "HH:MM" 24h, church-local */
+  startTime?: string | null;
+  /** End time, "HH:MM" 24h */
+  endTime?: string | null;
+  /** Ends at sunset (no fixed end time) */
+  endsAtSunset?: boolean;
+  /** All-day event */
+  allDay?: boolean;
+  /** Display label, e.g. "7:30 PM – 9:30 PM" */
   time: string;
   /** Location */
   location: string;
   /** Description */
-  description: string;
+  description?: string;
   /**
    * Color
    * @default "bg-indigo-500"
@@ -60,12 +68,20 @@ export interface CreateEventRequest {
   date?: string | null;
   dateRange?: DateRange | null;
   recurrence?: RecurrenceRule | null;
-  /** Time */
+  /** Start time, "HH:MM" 24h, church-local */
+  startTime?: string | null;
+  /** End time, "HH:MM" 24h */
+  endTime?: string | null;
+  /** Ends at sunset (no fixed end time) */
+  endsAtSunset?: boolean;
+  /** All-day event */
+  allDay?: boolean;
+  /** Display label, e.g. "7:30 PM – 9:30 PM" */
   time: string;
   /** Location */
   location: string;
   /** Description */
-  description: string;
+  description?: string;
   /**
    * Color
    * @default "bg-indigo-500"
@@ -122,10 +138,22 @@ export interface HealthResponse {
 
 /** RecurrenceRule */
 export interface RecurrenceRule {
-  /** Type */
-  type: string;
-  /** Dayofweek */
+  /** "weekly" | "monthly" | "yearly" */
+  freq?: string | null;
+  /** Every N weeks / months / years (default 1) */
+  interval?: number;
+  /** 0=Sun … 6=Sat (weekly, monthly) */
   dayOfWeek?: number | null;
+  /** Monthly: 1-4, or -1 for the last one */
+  weekOfMonth?: number | null;
+  /** Series can't occur before this date (YYYY-MM-DD) */
+  startDate?: string | null;
+  /** Last possible date, inclusive (YYYY-MM-DD) */
+  endDate?: string | null;
+  /** Skipped dates (YYYY-MM-DD) */
+  exceptions?: string[];
+  /** Older shape, accepted on input only: "weekly" | "monthly-last" */
+  type?: string | null;
 }
 
 /** SermonOverride */
