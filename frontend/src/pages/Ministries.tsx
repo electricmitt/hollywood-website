@@ -1,12 +1,10 @@
-import { Navigation } from "components/Navigation";
-import { Footer } from "components/Footer";
 import { useNavigate } from "react-router-dom";
+import { emailLink } from "../constants/church";
 
 export default function Ministries() {
   const navigate = useNavigate();
   return (
     <div className="min-h-screen flex flex-col bg-background">
-      <Navigation />
       
       {/* Hero Section */}
       <section className="pt-24 pb-12 px-4 mt-16">
@@ -149,15 +147,15 @@ export default function Ministries() {
             We welcome all members of our community to participate in our ministries. 
             Whether you're looking to serve, learn, or grow spiritually, there's a place for you.
           </p>
-          <button className="bg-primary text-primary-foreground py-3 px-6 rounded-md font-medium hover:bg-primary/90 transition-colors" onClick={(e) => e.preventDefault()}>
+          <a
+            href={emailLink("Getting involved in a ministry")}
+            className="inline-block bg-primary text-primary-foreground py-3 px-6 rounded-md font-medium hover:bg-primary/90 transition-colors"
+          >
             Contact Us About Ministries
-          </button>
+          </a>
         </div>
       </section>
       
-      <div className="mt-auto">
-        <Footer />
-      </div>
     </div>
   );
 }

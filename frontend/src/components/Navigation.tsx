@@ -3,26 +3,32 @@ import { ThemeToggle } from "components/ThemeToggle";
 import { Button } from "@/components/ui/button";
 import { useNavigate } from "react-router-dom";
 import { useState } from "react";
-import { Menu, X } from "lucide-react";
+import { Menu } from "lucide-react";
 import { Sheet, SheetContent, SheetTrigger } from "@/components/ui/sheet";
+
+const navigationItems = [
+  { name: "About", path: "/about" },
+  { name: "Events", path: "/events" },
+  { name: "Sermons", path: "/sermons" },
+  { name: "Ministries", path: "/ministries" },
+];
 
 export function Navigation() {
   const navigate = useNavigate();
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
-  
-  const navigationItems = [
-    { name: "About", path: "/about" },
-    { name: "Events", path: "/events" },
-    { name: "Sermons", path: "/sermons" },
-    { name: "Ministries", path: "/ministries" },
-  ];
+
+  // The nav persists across pages, so close the mobile menu after navigating.
+  const go = (path: string) => {
+    setMobileMenuOpen(false);
+    navigate(path);
+  };
 
   return (
     <nav className="fixed top-0 w-full z-50 bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60 border-b border-border/40">
       <div className="container mx-auto h-16 px-4">
         <div className="grid grid-cols-3 items-center h-full">
           {/* Left - Logo/Brand */}
-          <div className="flex items-center gap-2 cursor-pointer" onClick={() => navigate("/")}>
+          <div className="flex items-center gap-2 cursor-pointer" onClick={() => go("/")}>
             <span className="text-xl font-bold">COGASOC</span>
             <span className="text-sm text-muted-foreground hidden sm:inline">Church of God and Saints of Christ</span>
           </div>
@@ -35,7 +41,7 @@ export function Navigation() {
                   <NavigationMenuItem key={item.path}>
                     <NavigationMenuLink
                       className="group inline-flex h-10 w-max items-center justify-center rounded-md bg-background px-4 py-2 text-sm font-medium transition-colors hover:bg-accent hover:text-accent-foreground focus:bg-accent focus:text-accent-foreground focus:outline-none disabled:pointer-events-none disabled:opacity-50 cursor-pointer"
-                      onClick={() => navigate(item.path)}
+                      onClick={() => go(item.path)}
                     >
                       {item.name}
                     </NavigationMenuLink>
@@ -48,24 +54,20 @@ export function Navigation() {
           {/* Right - Call to action & Mobile Menu Trigger */}
           <div className="flex items-center justify-end gap-2">
             <div className="hidden sm:block">
-              <Button variant="outline" onClick={() => navigate("/give")} size="sm" className="mr-2">
+              <Button variant="outline" onClick={() => go("/give")} size="sm" className="mr-2">
                 Give
               </Button>
             </div>
-            
+
             {/* Desktop Visit Us button */}
-            <Button 
-              onClick={() => alert("Contact page coming soon!")} 
-              size="sm"
-              className="hidden sm:inline-flex"
-            >
+            <Button onClick={() => go("/visit")} size="sm" className="hidden sm:inline-flex">
               Visit Us
             </Button>
 
             <ThemeToggle />
-            
+
             {/* Mobile Menu */}
-            <Sheet>
+            <Sheet open={mobileMenuOpen} onOpenChange={setMobileMenuOpen}>
               <SheetTrigger asChild className="md:hidden">
                 <Button variant="ghost" size="icon" className="ml-1">
                   <Menu className="h-5 w-5" />
@@ -76,23 +78,23 @@ export function Navigation() {
                 <div className="flex flex-col h-full">
                   <div className="flex flex-col gap-6 py-6">
                     {navigationItems.map((item) => (
-                      <Button 
+                      <Button
                         key={item.path}
-                        variant="ghost" 
+                        variant="ghost"
                         className="justify-start text-lg font-medium"
-                        onClick={() => navigate(item.path)}
+                        onClick={() => go(item.path)}
                       >
                         {item.name}
                       </Button>
                     ))}
-                    <Button 
-                      variant="ghost" 
+                    <Button
+                      variant="ghost"
                       className="justify-start text-lg font-medium"
-                      onClick={() => navigate("/give")}
+                      onClick={() => go("/give")}
                     >
                       Give
                     </Button>
-                    <Button className="mt-4">
+                    <Button className="mt-4" onClick={() => go("/visit")}>
                       Visit Us
                     </Button>
                   </div>

@@ -34,7 +34,7 @@ def get_sermon_details(youtube, playlist_id):
 
         video_ids = [item['contentDetails']['videoId'] for item in pl_response['items']]
         vid_request = youtube.videos().list(
-            part='snippet,contentDetails',
+            part='snippet,contentDetails,status',
             id=','.join(video_ids)
         )
         vid_response = vid_request.execute()
@@ -61,6 +61,8 @@ def get_sermon_details(youtube, playlist_id):
                 "speaker": item['snippet'].get('videoOwnerChannelTitle', 'N/A').replace(' - Topic', ''),
                 "duration": round(duration_min),
                 "scripture": None, # Default value
+                # False when the owner disabled "Allow embedding" in YouTube Studio.
+                "embeddable": video_data.get('status', {}).get('embeddable', True),
             }
 
             # Check for and apply overrides

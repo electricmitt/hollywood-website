@@ -1,3 +1,5 @@
+import { CHURCH, SERVICE_TIMES, emailLink } from "../constants/church";
+
 export function WelcomeSection() {
   return (
     <section className="relative bg-background pt-48 pb-24">
@@ -13,18 +15,24 @@ export function WelcomeSection() {
           <div className="space-y-4">
             <div className="p-4 border rounded-lg bg-card">
               <h3 className="font-semibold">Time</h3>
-              <p className="text-muted-foreground">Friday Evening: 7:30 PM</p>
-              <p className="text-muted-foreground">Saturday: 10:00 AM - Sundown</p>
+              {SERVICE_TIMES.map(s => (
+                <p key={s.label} className="text-muted-foreground">{s.label}: {s.time}</p>
+              ))}
             </div>
             <div className="p-4 border rounded-lg bg-card">
               <h3 className="font-semibold">Virtually</h3>
               <p className="text-muted-foreground">Join us on Zoom:</p>
-              <a href="#" className="text-primary hover:underline">Click here to join</a>
+              <a href={emailLink("Zoom link for services")} className="text-primary hover:underline">
+                Email us for the Zoom link
+              </a>
             </div>
             <div className="p-4 border rounded-lg bg-card">
               <h3 className="font-semibold">Location</h3>
-              <p className="text-muted-foreground">4931 SW 20th Street</p>
-              <p className="text-muted-foreground">West Park, FL 33023</p>
+              <p className="text-muted-foreground">{CHURCH.addressLine1}</p>
+              <p className="text-muted-foreground">{CHURCH.addressLine2}</p>
+              <a href={CHURCH.directionsUrl} target="_blank" rel="noopener noreferrer" className="text-primary hover:underline text-sm">
+                Get directions
+              </a>
             </div>
           </div>
         </div>

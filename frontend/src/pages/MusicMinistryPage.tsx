@@ -1,6 +1,4 @@
 import { useNavigate } from "react-router-dom";
-import { Navigation } from "components/Navigation";
-import { Footer } from "components/Footer";
 import { Button } from "@/components/ui/button";
 
 export default function MusicMinistryPage() {
@@ -8,7 +6,6 @@ export default function MusicMinistryPage() {
 
   return (
     <div className="min-h-screen flex flex-col bg-background">
-      <Navigation />
       <main className="flex-grow container mx-auto px-4 py-8 pt-24 mt-16">
         <div className="mb-8">
           <Button variant="outline" onClick={() => navigate("/ministries")}>
@@ -181,7 +178,6 @@ export default function MusicMinistryPage() {
           </div>
         </section>
       </main>
-      <Footer />
     </div>
   );
 }

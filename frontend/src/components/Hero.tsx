@@ -1,8 +1,8 @@
 import { Button } from "@/components/ui/button";
-// import { useNavigate } from "react-router-dom";
+import { useNavigate } from "react-router-dom";
 
 export function Hero() {
-  // const navigate = useNavigate();
+  const navigate = useNavigate();
 
   return (
     <section className="relative min-h-screen flex items-center justify-center overflow-hidden bg-background">
@@ -19,14 +19,14 @@ export function Hero() {
             </h1>
             <p className="mx-auto max-w-[700px] text-muted-foreground md:text-xl">
               The Pillar and Ground of the Truth. <br />
-              Named in accordance with1st Corinthians 1:1-2 and Ephesians 2:19-20.
+              Named in accordance with 1st Corinthians 1:1-2 and Ephesians 2:19-20.
             </p>
           </div>
           <div className="space-x-4">
-            <Button size="lg" onClick={(e) => e.preventDefault()}>
+            <Button size="lg" onClick={() => navigate("/about")}>
               Learn More
             </Button>
-            <Button size="lg" variant="outline" onClick={(e) => e.preventDefault()}>
+            <Button size="lg" variant="outline" onClick={() => navigate("/visit")}>
               Plan Your Visit
             </Button>
           </div>
