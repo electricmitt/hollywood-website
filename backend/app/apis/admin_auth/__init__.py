@@ -1,7 +1,10 @@
+import math
 import os
 import secrets
+import threading
 import time
-from fastapi import APIRouter, HTTPException, Header
+from collections import deque
+from fastapi import APIRouter, HTTPException, Header, Request
 from pydantic import BaseModel
 
 from app.libs.storage import json_get, json_put
@@ -12,6 +15,17 @@ router = APIRouter(prefix="/admin-auth", tags=["admin-auth"])
 # Stored as { token: expiry_unix_seconds }.
 _SESSIONS_KEY = "admin_sessions"
 _TOKEN_TTL_SECONDS = 7 * 24 * 60 * 60  # 7 days
+
+# Login throttling (in memory; resets on restart). A client that fails too often
+# is locked out for the rest of the window — even for the right password, so the
+# response never reveals a correct guess. The global cap backstops clients that
+# spoof X-Forwarded-For to look like many different clients.
+_FAIL_WINDOW_SECONDS = 15 * 60
+_MAX_FAILS_PER_CLIENT = 5
+_MAX_FAILS_TOTAL = 30
+_fails_by_client: dict[str, deque] = {}
+_fails_all: deque = deque()
+_fails_lock = threading.Lock()
 
 
 class AdminLoginRequest(BaseModel):
@@ -65,16 +79,69 @@ def require_admin(x_admin_token: str | None = Header(default=None)) -> str:
     return x_admin_token
 
 
+# ─── Login throttling ─────────────────────────────────────────────────────────
+
+def _client_key(request: Request) -> str:
+    """Best-effort client identity: first X-Forwarded-For hop (set by the Vercel proxy)."""
+    forwarded = request.headers.get("x-forwarded-for", "")
+    return forwarded.split(",")[0].strip() or (request.client.host if request.client else "unknown")
+
+
+def _drop_old(q: deque, now: float) -> None:
+    while q and now - q[0] > _FAIL_WINDOW_SECONDS:
+        q.popleft()
+
+
+def _lockout_seconds(client: str) -> int:
+    """Seconds this client must wait before trying again (0 = allowed)."""
+    now = time.time()
+    with _fails_lock:
+        _drop_old(_fails_all, now)
+        q = _fails_by_client.get(client)
+        if q is not None:
+            _drop_old(q, now)
+        oldest = None
+        if q and len(q) >= _MAX_FAILS_PER_CLIENT:
+            oldest = q[0]
+        elif len(_fails_all) >= _MAX_FAILS_TOTAL:
+            oldest = _fails_all[0]
+        return 0 if oldest is None else max(1, math.ceil(_FAIL_WINDOW_SECONDS - (now - oldest)))
+
+
+def _record_failure(client: str) -> None:
+    now = time.time()
+    with _fails_lock:
+        _fails_by_client.setdefault(client, deque()).append(now)
+        _fails_all.append(now)
+        if len(_fails_by_client) > 10_000:  # keep memory bounded
+            for key in [k for k, q in _fails_by_client.items() if not q or now - q[-1] > _FAIL_WINDOW_SECONDS]:
+                del _fails_by_client[key]
+
+
 # ─── Endpoints ────────────────────────────────────────────────────────────────
 
 @router.post("/login")
-def admin_login(body: AdminLoginRequest) -> AdminLoginResponse:
+def admin_login(body: AdminLoginRequest, request: Request) -> AdminLoginResponse:
     """Verify admin password and return a session token."""
+    client = _client_key(request)
+    wait = _lockout_seconds(client)
+    if wait:
+        minutes = math.ceil(wait / 60)
+        raise HTTPException(
+            status_code=429,
+            detail=f"Too many login attempts. Try again in {minutes} minute{'s' if minutes != 1 else ''}.",
+            headers={"Retry-After": str(wait)},
+        )
+
     admin_password = os.environ.get("ADMIN_PASSWORD", "")
-    # Timing-safe comparison; reject when no password is configured.
-    if not admin_password or not secrets.compare_digest(body.password, admin_password):
+    # Timing-safe comparison on bytes (compare_digest rejects non-ASCII str);
+    # reject when no password is configured.
+    if not admin_password or not secrets.compare_digest(body.password.encode(), admin_password.encode()):
+        _record_failure(client)
         raise HTTPException(status_code=401, detail="Invalid password")
 
+    with _fails_lock:
+        _fails_by_client.pop(client, None)
     token = secrets.token_hex(32)
     sessions = _prune(_load_sessions())
     sessions[token] = time.time() + _TOKEN_TTL_SECONDS

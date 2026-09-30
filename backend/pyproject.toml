@@ -21,7 +21,7 @@ base = [
   "dotenv>=0.9.9",
 ]
 dev = ["asyncpg-stubs>=0.30.2", "pytest>=8.4.2"]
-app = ["yt-dlp == 2025.12.8", "google-api-python-client == 2.187.0", "google-auth == 2.47.0", "youtube-transcript-api == 1.2.3"]
+app = ["google-api-python-client == 2.187.0", "google-auth == 2.47.0"]
 
 [tool.pytest.ini_options]
 pythonpath = ["."]

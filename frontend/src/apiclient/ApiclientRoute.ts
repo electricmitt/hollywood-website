@@ -9,13 +9,10 @@ import {
   CreateEventRequest,
   DeleteEventData,
   DeleteOverrideData,
-  DownloadAudioData,
-  DownloadRequest,
   GetAllOverridesData,
   GetEventsData,
   GetOverrideData,
   GetSermonsData,
-  GetTranscriptRouteData,
   SaveOverrideData,
   SermonOverride,
   UpdateEventData,
@@ -99,38 +96,7 @@ export namespace Apiclient {
     export type ResponseBody = GetSermonsData;
   }
 
-  /**
-   * No description
-   * @tags dbtn/module:youtube
-   * @name get_transcript_route
-   * @summary Get Transcript Route
-   * @request GET:/routes/transcript/{video_id}
-   */
-  export namespace get_transcript_route {
-    export type RequestParams = {
-      /** Video Id */
-      videoId: string;
-    };
-    export type RequestQuery = {};
-    export type RequestBody = never;
-    export type RequestHeaders = {};
-    export type ResponseBody = GetTranscriptRouteData;
-  }
 
-  /**
-   * No description
-   * @tags dbtn/module:download_audio
-   * @name download_audio
-   * @summary Download Audio
-   * @request POST:/routes/download_audio
-   */
-  export namespace download_audio {
-    export type RequestParams = {};
-    export type RequestQuery = {};
-    export type RequestBody = DownloadRequest;
-    export type RequestHeaders = {};
-    export type ResponseBody = DownloadAudioData;
-  }
 
   /**
    * @description Retrieve all sermon overrides from storage.

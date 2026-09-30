@@ -6,15 +6,14 @@ import { Navigation } from "components/Navigation";
 import { Footer } from "components/Footer";
 import { DocumentTitle } from "components/DocumentTitle";
 import { Toaster } from "@/components/ui/sonner";
+// Loaded up front: it must still render when downloading a page has failed.
+import SomethingWentWrongPage from "./pages/SomethingWentWrongPage";
 
 export const SuspenseWrapper = ({ children }: { children: ReactNode }) => {
   return <Suspense>{children}</Suspense>;
 };
 
 const NotFoundPage = lazy(() => import("./pages/NotFoundPage"));
-const SomethingWentWrongPage = lazy(
-  () => import("./pages/SomethingWentWrongPage"),
-);
 
 export const router = createBrowserRouter(
   [
@@ -26,14 +25,16 @@ export const router = createBrowserRouter(
           <DocumentTitle />
           <ScrollRestoration />
           <Navigation />
-          <SuspenseWrapper>
+          {/* Holds the page's space while it downloads so the footer doesn't jump up. */}
+          <Suspense fallback={<div className="min-h-screen" />}>
             <Outlet />
-          </SuspenseWrapper>
+          </Suspense>
           <Footer />
           {/* Renders every toast() message; without it they were silently dropped. */}
           <Toaster position="top-center" richColors closeButton />
         </AppProvider>
       ),
+      errorElement: <SomethingWentWrongPage />,
       children: userRoutes
     },
     {
@@ -43,11 +44,7 @@ export const router = createBrowserRouter(
           <NotFoundPage />
         </SuspenseWrapper>
       ),
-      errorElement: (
-        <SuspenseWrapper>
-          <SomethingWentWrongPage />
-        </SuspenseWrapper>
-      ),
+      errorElement: <SomethingWentWrongPage />,
     },
   ]
 );

@@ -32,8 +32,14 @@ export function AdminLoginDialog({ open, onOpenChange, login }: Props) {
       } else {
         setError("Incorrect password. Please try again.");
       }
-    } catch {
-      setError("Incorrect password. Please try again.");
+    } catch (err) {
+      // The API client throws the failed response; 429 means too many attempts.
+      const e = err as { status?: number; error?: { detail?: unknown } } | undefined;
+      setError(
+        e?.status === 429 && typeof e.error?.detail === "string"
+          ? e.error.detail
+          : "Incorrect password. Please try again.",
+      );
     } finally {
       setLoading(false);
     }

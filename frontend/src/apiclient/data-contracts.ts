@@ -112,12 +112,6 @@ export interface DeleteResponse {
   message: string;
 }
 
-/** DownloadRequest */
-export interface DownloadRequest {
-  /** Video Id */
-  video_id: string;
-}
-
 /** EventsResponse */
 export interface EventsResponse {
   /** Events */
@@ -201,19 +195,6 @@ export interface GetSermonsParams {
 export type GetSermonsData = any;
 
 export type GetSermonsError = HTTPValidationError;
-
-export interface GetTranscriptRouteParams {
-  /** Video Id */
-  videoId: string;
-}
-
-export type GetTranscriptRouteData = any;
-
-export type GetTranscriptRouteError = HTTPValidationError;
-
-export type DownloadAudioData = any;
-
-export type DownloadAudioError = HTTPValidationError;
 
 export type GetAllOverridesData = any;
 
