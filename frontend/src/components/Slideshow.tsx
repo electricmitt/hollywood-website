@@ -8,7 +8,7 @@ const defaultImages = [
     alt: "Church building"
   },
   {
-    url: "https://files.catbox.moe/writqh.png",
+    url: "/images/worship-service.jpg",
     alt: "Worship service"
   },
   {
