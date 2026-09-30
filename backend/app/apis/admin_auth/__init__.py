@@ -149,6 +149,17 @@ def admin_login(body: AdminLoginRequest, request: Request) -> AdminLoginResponse
     return AdminLoginResponse(token=token)
 
 
+@router.get("/debug-client-headers")
+def debug_client_headers(request: Request) -> dict:
+    """TEMPORARY: which address headers reach us. Echoes only the caller's own addresses."""
+    wanted = ("forwarded", "real-ip", "client-ip", "connecting-ip")
+    return {
+        "address_headers": {k: v for k, v in request.headers.items() if any(w in k for w in wanted)},
+        "header_names": sorted(request.headers.keys()),
+        "peer": request.client.host if request.client else None,
+    }
+
+
 @router.post("/verify")
 def admin_verify(body: AdminVerifyRequest) -> AdminVerifyResponse:
     """Check if a session token is still valid."""
