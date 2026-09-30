@@ -3,8 +3,6 @@ import re
 from fastapi import APIRouter, HTTPException, Depends
 from googleapiclient.discovery import build
 from pydantic import BaseModel
-from youtube_transcript_api import YouTubeTranscriptApi
-from youtube_transcript_api.formatters import JSONFormatter
 
 from app.libs.storage import json_get
 
@@ -85,12 +83,3 @@ def get_sermons(playlistId: str, youtube: build = Depends(get_youtube_service)):
     except Exception as e:
         print(f"An error occurred: {e}")
         raise HTTPException(status_code=500, detail="Failed to fetch sermons.")
-
-@router.get("/transcript/{video_id}")
-def get_transcript_route(video_id: str):
-    try:
-        transcript_list = YouTubeTranscriptApi.list_transcripts(video_id)
-        transcript = transcript_list.find_transcript(['en', 'en-US'])
-        return transcript.fetch()
-    except Exception:
-        return {"error": "Transcript not found or failed to fetch."}

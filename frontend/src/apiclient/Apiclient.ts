@@ -17,9 +17,6 @@ import {
   DeleteOverrideData,
   DeleteOverrideError,
   DeleteOverrideParams,
-  DownloadAudioData,
-  DownloadAudioError,
-  DownloadRequest,
   GetAllOverridesData,
   GetEventsData,
   GetOverrideData,
@@ -28,9 +25,6 @@ import {
   GetSermonsData,
   GetSermonsError,
   GetSermonsParams,
-  GetTranscriptRouteData,
-  GetTranscriptRouteError,
-  GetTranscriptRouteParams,
   SaveOverrideData,
   SaveOverrideError,
   SaveOverrideParams,
@@ -123,37 +117,7 @@ export class Apiclient<SecurityDataType = unknown> extends HttpClient<SecurityDa
       ...params,
     });
 
-  /**
-   * No description
-   *
-   * @tags dbtn/module:youtube
-   * @name get_transcript_route
-   * @summary Get Transcript Route
-   * @request GET:/routes/transcript/{video_id}
-   */
-  get_transcript_route = ({ videoId, ...query }: GetTranscriptRouteParams, params: RequestParams = {}) =>
-    this.request<GetTranscriptRouteData, GetTranscriptRouteError>({
-      path: `/routes/transcript/${videoId}`,
-      method: "GET",
-      ...params,
-    });
 
-  /**
-   * No description
-   *
-   * @tags dbtn/module:download_audio
-   * @name download_audio
-   * @summary Download Audio
-   * @request POST:/routes/download_audio
-   */
-  download_audio = (data: DownloadRequest, params: RequestParams = {}) =>
-    this.request<DownloadAudioData, DownloadAudioError>({
-      path: `/routes/download_audio`,
-      method: "POST",
-      body: data,
-      type: ContentType.Json,
-      ...params,
-    });
 
   /**
    * @description Retrieve all sermon overrides from storage.
