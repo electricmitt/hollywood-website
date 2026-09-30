@@ -1,7 +1,3 @@
-import * as React from "react";
-import { useState, useEffect, useRef } from "react";
-import { useMediaQuery } from "../utils/useMediaQuery";
-
 // Default images
 const defaultImages = [
   {
@@ -11,10 +7,6 @@ const defaultImages = [
   {
     url: "https://files.catbox.moe/writqh.png",
     alt: "Worship service"
-  },
-  {
-    url: "https://images.unsplash.com/photo-1601577670944-ef04d03cd680?ixlib=rb-4.0.3&q=85&fm=jpg&crop=entropy&cs=srgb&w=1200",
-    alt: "Church community gathering"
   },
   {
     url: "https://images.unsplash.com/photo-1552057426-9f23e61fa7b1?ixlib=rb-4.0.3&q=85&fm=jpg&crop=entropy&cs=srgb&w=1200",
@@ -38,143 +30,108 @@ const defaultImages = [
   }
 ];
 
-// Component props interface
+// Torus geometry (px). The ring spins around its vertical axis; each photo
+// wraps the outer half of the tube over one sector of the ring.
+const RING_RADIUS = 265; // center of the ring to the center of the tube
+const TUBE_RADIUS = 110;
+const SLICES_PER_PHOTO = 3; // columns per photo, so the ring looks round
+const TUBE_SEGMENTS = 12; // rows around the tube; the outer half shows the photo
+const TILT_DEG = -24; // tip the top toward the viewer so it reads as a donut
+
 interface SlideshowProps {
   images?: Array<{ url: string; alt: string }>;
   rotationSpeed?: number; // seconds per full rotation
-  slideWidth?: number; // width in pixels
-  slideHeight?: number; // height in pixels
-  slideCount?: number; // number of slides to show
 }
 
-export function Slideshow({
-  images = defaultImages,
-  rotationSpeed = 20,
-  slideWidth = 350,
-  slideHeight = 400,
-  slideCount = 8
-}: SlideshowProps) {
-  // Check if on mobile
-  const isMobile = useMediaQuery("(max-width: 768px)");
-  
-  // Adjust dimensions for mobile
-  const responsiveWidth = isMobile ? 280 : slideWidth;
-  const responsiveHeight = isMobile ? 320 : slideHeight;
-  const responsiveCount = isMobile ? 5 : slideCount;
-  
-  // If provided slideCount is less than images length, trim images array
-  const displayImages = images.slice(0, Math.min(responsiveCount, images.length));
-  
-  // Animation reference
-  const carouselRef = useRef<HTMLDivElement>(null);
-  const [rotation, setRotation] = useState(0);
-  const rotationRef = useRef(rotation);
-  
-  // Make sure we have enough images
-  while (displayImages.length < responsiveCount) {
-    // If we don't have enough images, duplicate existing ones
-    displayImages.push(...images.slice(0, Math.min(responsiveCount - displayImages.length, images.length)));
+export function Slideshow({ images = defaultImages, rotationSpeed = 40 }: SlideshowProps) {
+  const columns = images.length * SLICES_PER_PHOTO;
+  const rowHeight = (2 * Math.PI * TUBE_RADIUS) / TUBE_SEGMENTS;
+  const photoRows = TUBE_SEGMENTS / 2;
+
+  const tiles = [];
+  for (let row = 0; row < TUBE_SEGMENTS; row++) {
+    // Row 0 sits on top of the tube; rows run over the outside, then back through the hole.
+    const stepDeg = 360 / TUBE_SEGMENTS;
+    const tubeDeg = 90 - (row + 0.5) * stepDeg;
+    const tubeRad = (tubeDeg * Math.PI) / 180;
+    // Tiles are wider on the outside of the ring than on the inside. Size each
+    // row to its wider edge so neighbours overlap instead of leaving wedges.
+    const widestCos = Math.max(
+      Math.cos(((tubeDeg + stepDeg / 2) * Math.PI) / 180),
+      Math.cos(((tubeDeg - stepDeg / 2) * Math.PI) / 180),
+    );
+    const width = (2 * Math.PI * (RING_RADIUS + TUBE_RADIUS * widestCos)) / columns;
+    const inner = row >= photoRows;
+    // Fake lighting: darker toward the bottom and inside the hole.
+    const shade = inner ? 0.6 : 0.3 * Math.max(0, -Math.sin(tubeRad)) + 0.05;
+    const photoRow = row % photoRows;
+
+    for (let col = 0; col < columns; col++) {
+      const image = images[Math.floor(col / SLICES_PER_PHOTO)];
+      const slice = col % SLICES_PER_PHOTO;
+      tiles.push(
+        <div
+          key={`${row}-${col}`}
+          className="torus-tile"
+          style={{
+            width: width + 2, // slight overlap hides seams
+            height: rowHeight + 2,
+            marginLeft: -width / 2,
+            marginTop: -rowHeight / 2,
+            transform: `rotateY(${(col + 0.5) * (360 / columns)}deg) translateZ(${RING_RADIUS}px) rotateX(${tubeDeg}deg) translateZ(${TUBE_RADIUS}px)`,
+            backgroundImage: `linear-gradient(rgba(0,0,0,${shade}), rgba(0,0,0,${shade})), url("${image.url}")`,
+            backgroundSize: `100% 100%, ${width * SLICES_PER_PHOTO}px ${rowHeight * photoRows}px`,
+            backgroundPosition: `0 0, ${-slice * width}px ${-photoRow * rowHeight}px`,
+          }}
+        />,
+      );
+    }
   }
-  
-  // Calculate the angle between each item in the carousel
-  const angleIncrement = 360 / responsiveCount;
-  
-  // Handle animation timing
-  useEffect(() => {
-    let animationFrameId: number;
-    let startTime: number;
-    
-    // Animation function
-    const animate = (timestamp: number) => {
-      if (!startTime) startTime = timestamp;
-      const elapsedTime = timestamp - startTime;
-      
-      // Calculate rotation based on time and speed
-      // rotationSpeed is in seconds, so convert to ms
-      const degreesPerMs = 360 / (rotationSpeed * 1000);
-      const newRotation = (elapsedTime * degreesPerMs) % 360;
-      
-      setRotation(newRotation);
-      animationFrameId = requestAnimationFrame(animate);
-    };
-    
-    animationFrameId = requestAnimationFrame(animate);
-    
-    // Cleanup
-    return () => {
-      if (animationFrameId) {
-        cancelAnimationFrame(animationFrameId);
-      }
-    };
-  }, [rotationSpeed]);
 
   return (
-    <div className="w-full md:h-[600px] h-[400px] flex items-center justify-center">
-      <div 
-        className="relative" 
-        style={{ 
-          perspective: '1000px',
-          width: `${responsiveWidth + 100}px`,
-          height: `${responsiveHeight + 100}px`
-        }}
-      >
-        <div 
-          ref={carouselRef}
-          className="absolute w-full h-full transition-transform transform-style-3d"
-          style={{
-            transformStyle: 'preserve-3d',
-            transform: `rotateY(${rotation}deg)`,
-            transition: 'transform 0.01s linear'
-          }}
-        >
-          {displayImages.map((image, index) => {
-            // Calculate the position for this panel
-            const angle = angleIncrement * index;
-            const radians = (angle * Math.PI) / 180;
-            
-            // Calculate radius based on slide dimensions
-            const radius = (responsiveWidth / 2) / Math.tan(Math.PI / responsiveCount);
-            
-            return (
-              <div
-                key={`slide-${index}`}
-                className="absolute top-0 left-0 w-full h-full overflow-hidden rounded-lg shadow-lg"
-                style={{
-                  width: `${responsiveWidth}px`,
-                  height: `${responsiveHeight}px`,
-                  transformStyle: 'preserve-3d',
-                  transform: `rotateY(${angle}deg) translateZ(${radius}px)`,
-                  backfaceVisibility: 'hidden',
-                  transition: 'transform 0.5s ease-out',
-                }}
-              >
-                <img
-                  src={image.url}
-                  alt={image.alt}
-                  className="w-full h-full object-cover object-center object-top"
-                  style={{
-                    filter: 'brightness(0.9)'
-                  }}
-                  loading="eager"
-                />
-                <div 
-                  className="absolute inset-0 bg-gradient-to-t from-black/70 to-transparent flex items-end p-4"
-                >
-                  <p className="text-white font-medium truncate">{image.alt}</p>
-                </div>
-              </div>
-            );
-          })}
+    <div
+      className="w-full md:h-[600px] h-[400px] flex items-center justify-center overflow-hidden"
+      role="img"
+      aria-label={`Rotating photos: ${images.map((i) => i.alt).join(", ")}`}
+    >
+      <div className="torus-scale">
+        <div className="torus-stage">
+          <div className="torus-tilt">
+            <div className="torus-spin" style={{ animationDuration: `${rotationSpeed}s` }}>
+              {tiles}
+            </div>
+          </div>
         </div>
       </div>
-      
 
-      
-      {/* Add global CSS for 3D effects */}
       <style>{`
-        .transform-style-3d {
+        .torus-scale { transform: scale(0.45); }
+        @media (min-width: 768px) { .torus-scale { transform: scale(0.8); } }
+        @media (min-width: 1024px) { .torus-scale { transform: scale(1); } }
+        .torus-stage {
+          width: ${2 * (RING_RADIUS + TUBE_RADIUS)}px;
+          height: ${2 * (RING_RADIUS + TUBE_RADIUS)}px;
+          perspective: 1400px;
+        }
+        .torus-tilt, .torus-spin {
+          position: relative;
+          width: 100%;
+          height: 100%;
           transform-style: preserve-3d;
         }
+        .torus-tilt { transform: rotateX(${TILT_DEG}deg); }
+        .torus-spin { animation: torus-spin linear infinite; }
+        .torus-spin:hover { animation-play-state: paused; }
+        .torus-tile {
+          position: absolute;
+          left: 50%;
+          top: 50%;
+          backface-visibility: hidden;
+          background-repeat: no-repeat;
+          background-color: #27272a; /* keeps the ring solid if a photo fails to load */
+        }
+        @keyframes torus-spin { to { transform: rotateY(-360deg); } }
+        @media (prefers-reduced-motion: reduce) { .torus-spin { animation: none; } }
       `}</style>
     </div>
   );
