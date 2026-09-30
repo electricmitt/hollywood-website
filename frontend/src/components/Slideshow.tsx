@@ -1,3 +1,6 @@
+import { useEffect, useRef, useState } from "react";
+import { mountPhotoTorus } from "../utils/photoTorus";
+
 // Default images
 const defaultImages = [
   {
@@ -30,20 +33,44 @@ const defaultImages = [
   }
 ];
 
-// Torus geometry (px). The ring spins around its vertical axis; each photo
-// wraps the outer half of the tube over one sector of the ring.
+interface SlideshowProps {
+  images?: Array<{ url: string; alt: string }>;
+  rotationSpeed?: number; // seconds per full rotation
+}
+
+/** Home page photo torus: smooth WebGL version, or tiled CSS 3D where WebGL is unavailable. */
+export function Slideshow({ images = defaultImages, rotationSpeed = 40 }: SlideshowProps) {
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const [webgl, setWebgl] = useState(true);
+
+  useEffect(() => {
+    if (!canvasRef.current) return;
+    const cleanup = mountPhotoTorus(canvasRef.current, images, rotationSpeed);
+    if (!cleanup) setWebgl(false);
+    return cleanup ?? undefined;
+  }, [images, rotationSpeed]);
+
+  if (!webgl) return <CssTorus images={images} rotationSpeed={rotationSpeed} />;
+  return (
+    <div
+      className="w-full md:h-[600px] h-[400px]"
+      role="img"
+      aria-label={`Rotating photos: ${images.map((i) => i.alt).join(", ")}`}
+    >
+      <canvas ref={canvasRef} className="block w-full h-full" />
+    </div>
+  );
+}
+
+// Fallback: the torus built from flat CSS 3D tiles. The ring spins around its
+// vertical axis; each photo wraps the outer half of the tube over one sector.
 const RING_RADIUS = 265; // center of the ring to the center of the tube
 const TUBE_RADIUS = 110;
 const SLICES_PER_PHOTO = 3; // columns per photo, so the ring looks round
 const TUBE_SEGMENTS = 12; // rows around the tube; the outer half shows the photo
 const TILT_DEG = -24; // tip the top toward the viewer so it reads as a donut
 
-interface SlideshowProps {
-  images?: Array<{ url: string; alt: string }>;
-  rotationSpeed?: number; // seconds per full rotation
-}
-
-export function Slideshow({ images = defaultImages, rotationSpeed = 40 }: SlideshowProps) {
+function CssTorus({ images, rotationSpeed }: Required<SlideshowProps>) {
   const columns = images.length * SLICES_PER_PHOTO;
   const rowHeight = (2 * Math.PI * TUBE_RADIUS) / TUBE_SEGMENTS;
   const photoRows = TUBE_SEGMENTS / 2;
