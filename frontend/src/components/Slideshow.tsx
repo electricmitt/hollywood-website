@@ -13,8 +13,8 @@ const defaultImages = [
     alt: "Prayer service"
   },
   {
-    url: "https://files.catbox.moe/klmxnl.jpg",
-    alt: "Community outreach"
+    url: "/images/community-outreach.jpg",
+    alt: "Community outreach at Global Empowerment Mission"
   },
   {
     url: "https://images.unsplash.com/photo-1478147427282-58a87a120781?ixlib=rb-4.0.3&q=85&fm=jpg&crop=entropy&cs=srgb&w=1200",
