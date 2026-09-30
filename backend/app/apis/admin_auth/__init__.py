@@ -82,9 +82,19 @@ def require_admin(x_admin_token: str | None = Header(default=None)) -> str:
 # ─── Login throttling ─────────────────────────────────────────────────────────
 
 def _client_key(request: Request) -> str:
-    """Best-effort client identity: first X-Forwarded-For hop (set by the Vercel proxy)."""
-    forwarded = request.headers.get("x-forwarded-for", "")
-    return forwarded.split(",")[0].strip() or (request.client.host if request.client else "unknown")
+    """Best-effort visitor address.
+
+    Site traffic arrives via the Vercel rewrite, and Railway replaces
+    X-Forwarded-For/X-Real-IP with Vercel's shared address, so use Vercel's
+    X-Vercel-Forwarded-For (Vercel overwrites any client-sent value). Direct
+    calls to Railway get X-Real-IP from Railway. A direct caller can fake the
+    Vercel header to dodge the per-client limit; the global cap still applies.
+    """
+    for header in ("x-vercel-forwarded-for", "x-real-ip"):
+        value = request.headers.get(header, "").split(",")[0].strip()
+        if value:
+            return value
+    return request.client.host if request.client else "unknown"
 
 
 def _drop_old(q: deque, now: float) -> None:
@@ -147,17 +157,6 @@ def admin_login(body: AdminLoginRequest, request: Request) -> AdminLoginResponse
     sessions[token] = time.time() + _TOKEN_TTL_SECONDS
     _save_sessions(sessions)
     return AdminLoginResponse(token=token)
-
-
-@router.get("/debug-client-headers")
-def debug_client_headers(request: Request) -> dict:
-    """TEMPORARY: which address headers reach us. Echoes only the caller's own addresses."""
-    wanted = ("forwarded", "real-ip", "client-ip", "connecting-ip")
-    return {
-        "address_headers": {k: v for k, v in request.headers.items() if any(w in k for w in wanted)},
-        "header_names": sorted(request.headers.keys()),
-        "peer": request.client.host if request.client else None,
-    }
 
 
 @router.post("/verify")
